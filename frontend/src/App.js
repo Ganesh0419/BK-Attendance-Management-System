@@ -257,11 +257,17 @@ const Dashboard = () => {
           <div style={{
             width: '46px', height: '46px', borderRadius: '50%',
             background: 'linear-gradient(135deg, #667eea, #764ba2)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '22px', flexShrink: 0
-          }}>👆</div>
+            display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '22px', flexShrink: 0, overflow: 'hidden'
+          }}>
+            {lastScanToast.photoUrl ? (
+              <img src={lastScanToast.photoUrl} alt="User Face" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            ) : (
+              lastScanToast.verifyMode === '15' ? '🧑' : '👆'
+            )}
+          </div>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: '10px', color: '#a0a8d0', fontWeight: 700, letterSpacing: '1.5px', textTransform: 'uppercase', marginBottom: '3px' }}>
-              🔴 LIVE FINGERPRINT SCAN
+              🔴 LIVE {lastScanToast.verifyMode === '15' ? 'FACE' : 'FINGERPRINT'} SCAN
             </div>
             <div style={{ fontSize: '17px', fontWeight: 800 }}>{resolvedName(lastScanToast)}</div>
             <div style={{ fontSize: '12px', color: '#8892b0', marginTop: '2px' }}>
@@ -549,6 +555,22 @@ const Dashboard = () => {
 };
 
 const AttendancePage = () => {
+  const [livePunches, setLivePunches] = useState([]);
+  const [userMap, setUserMap] = useState({});
+
+  useEffect(() => {
+    api.get('/users/map').then(res => setUserMap(res.data)).catch(() => {});
+    const handlePunch = (data) => {
+      const entry = { ...data, id: Date.now(), time: new Date().toLocaleTimeString(), date: new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) };
+      setLivePunches(prev => [entry, ...prev]);
+    };
+    socket.on('live_punch', handlePunch);
+    return () => socket.off('live_punch', handlePunch);
+  }, []);
+
+  const getInitials = (name) => name ? name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0,2) : '??';
+  const resolvedName = (punch) => punch.userName || userMap[String(punch.userId)] || `User ${punch.userId}`;
+
   return (
     <div className="dashboard-card">
       <div className="card-header">
@@ -570,6 +592,23 @@ const AttendancePage = () => {
               </tr>
           </thead>
           <tbody>
+              {livePunches.map((punch, idx) => (
+                  <tr key={`live-${idx}`} style={{ background: '#f8f9ff', animation: 'punchSlide 0.5s ease-out' }}>
+                      <td>{punch.date}</td>
+                      <td>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                              <div className="avatar" style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
+                                  {getInitials(resolvedName(punch))}
+                              </div>
+                              {resolvedName(punch)} <span style={{ fontSize: '10px', background: '#667eea', color: 'white', padding: '2px 6px', borderRadius: '10px', marginLeft: '5px' }}>NEW</span>
+                          </div>
+                      </td>
+                      <td>User</td>
+                      <td>{punch.time || punch.timestamp}</td>
+                      <td>--:-- --</td>
+                      <td><span className="status present">Present</span></td>
+                  </tr>
+              ))}
               <tr>
                   <td>20 June 2026</td>
                   <td><div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}><div className="avatar">A</div> Ahmed Khan</div></td>
@@ -715,6 +754,58 @@ const TeachersPage = () => {
     }
   };
 
+  const [inTime, setInTime] = useState('07:30');
+  const [outTime, setOutTime] = useState('09:00'); // 1.5 hours standard shift
+  const [selectedTeacher, setSelectedTeacher] = useState('Ahmed Khan');
+
+  const calculatePayout = () => {
+    if (!inTime || !outTime) return { minutes: 0, hours: 0, remMins: 0, payout: 0, deduction: 0 };
+    
+    // Parse input times
+    const [inH, inM] = inTime.split(':').map(Number);
+    const [outH, outM] = outTime.split(':').map(Number);
+    
+    const actualIn = new Date(); actualIn.setHours(inH, inM, 0);
+    const actualOut = new Date(); actualOut.setHours(outH, outM, 0);
+    
+    // Shift boundaries
+    const shiftStart = new Date(); shiftStart.setHours(7, 30, 0);
+    const graceEnd = new Date(); graceEnd.setHours(7, 35, 0);
+    const shiftEnd = new Date(); shiftEnd.setHours(9, 0, 0);
+    
+    // 1. Calculate Effective In Time
+    let effectiveIn = actualIn;
+    if (actualIn <= graceEnd) {
+        effectiveIn = shiftStart; // Grace period: treat as 07:30
+    }
+    
+    // 2. Calculate Effective Out Time
+    let effectiveOut = actualOut;
+    if (actualOut > shiftEnd) {
+        effectiveOut = shiftEnd; // Don't pay extra for staying past 09:00
+    }
+    
+    // 3. Calculate Valid Minutes
+    let validDiffMs = effectiveOut - effectiveIn;
+    if (validDiffMs < 0) validDiffMs = 0; 
+    
+    const validMinutes = Math.floor(validDiffMs / 60000);
+    
+    // Rate: 700 rupees for 1.5 hours (90 minutes)
+    const ratePerMinute = 700 / 90; 
+    const payout = validMinutes * ratePerMinute;
+    const deduction = 700 - payout;
+    
+    return {
+      minutes: validMinutes,
+      hours: Math.floor(validMinutes / 60),
+      remMins: validMinutes % 60,
+      payout: payout.toFixed(2),
+      deduction: deduction > 0 ? deduction.toFixed(2) : 0
+    };
+  };
+
+  const calc = calculatePayout();
   return (
     <div className="dashboard-card">
       <div className="card-header">
@@ -743,12 +834,12 @@ const TeachersPage = () => {
                     <td>{t.role === 'teacher' ? (t.subject || 'N/A') : (t.profession || 'N/A')}</td>
                     <td>₹ {t.salary ? t.salary.toLocaleString('en-IN') : '0'}</td>
                     <td><code style={{ background: '#f0f2f5', padding: '4px 8px', borderRadius: '4px' }}>{t.fingerprint_id}</code></td>
-                    <td><button className="btn btn-warning" style={{ padding: '4px 10px' }}>💰 Details</button></td>
+                    <td><button className="btn btn-warning" style={{ padding: '4px 10px' }} onClick={() => setSelectedTeacher(t.name)}>💰 Calculate Pay</button></td>
                 </tr>
               ))}
               {teachers.length === 0 && (
                 <tr>
-                  <td colSpan="5" style={{ textAlign: 'center', padding: '20px', color: '#888' }}>No teachers or staff found.</td>
+                  <td colSpan="6" style={{ textAlign: 'center', padding: '20px', color: '#888' }}>No teachers or staff found.</td>
                 </tr>
               )}
           </tbody>
@@ -777,20 +868,17 @@ const TeachersPage = () => {
                 <input type="text" placeholder="Full Name *" value={name} onChange={e => setName(e.target.value)} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ddd' }} required />
               </div>
               
-              <div style={{ marginBottom: '15px' }}>
-                <input type="email" placeholder="Email Address" value={email} onChange={e => setEmail(e.target.value)} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ddd' }} />
-              </div>
-              
-              <div style={{ marginBottom: '15px' }}>
-                <input type="number" placeholder="Base Salary (₹)" value={salary} onChange={e => setSalary(e.target.value)} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ddd' }} />
+              <div style={{ marginBottom: '15px', display: 'flex', gap: '10px' }}>
+                <input type="text" placeholder="Base Salary (₹)" value={salary} onChange={e => setSalary(e.target.value)} style={{ width: '50%', padding: '10px', borderRadius: '6px', border: '1px solid #ddd' }} />
+                <input type="text" placeholder="Timing (e.g. 7:30 AM - 9:00 AM)" value={timing} onChange={e => setTiming(e.target.value)} style={{ width: '50%', padding: '10px', borderRadius: '6px', border: '1px solid #ddd' }} />
               </div>
 
               {role === 'teacher' && (
-                <div style={{ background: '#f8f9fa', padding: '15px', borderRadius: '8px', marginBottom: '20px', border: '1px solid #eee' }}>
+                <div style={{ background: '#f0f4f8', padding: '15px', borderRadius: '8px', marginBottom: '20px', border: '1px solid #d9e2ec' }}>
                   <h4 style={{ margin: '0 0 10px 0', fontSize: '13px', color: '#555', textTransform: 'uppercase' }}>Teacher Details</h4>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                    <input type="text" placeholder="Topic / Subject" value={subject} onChange={e => setSubject(e.target.value)} style={{ padding: '10px', borderRadius: '6px', border: '1px solid #ddd' }} />
-                    <input type="text" placeholder="Timing (e.g. 9 AM - 1 PM)" value={timing} onChange={e => setTiming(e.target.value)} style={{ padding: '10px', borderRadius: '6px', border: '1px solid #ddd' }} />
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '10px' }}>
+                    <input type="text" placeholder="Subject Taught" value={subject} onChange={e => setSubject(e.target.value)} style={{ padding: '10px', borderRadius: '6px', border: '1px solid #ddd' }} />
+                    <input type="text" placeholder="Years of Experience" value={experience} onChange={e => setExperience(e.target.value)} style={{ padding: '10px', borderRadius: '6px', border: '1px solid #ddd' }} />
                   </div>
                 </div>
               )}
@@ -812,6 +900,38 @@ const TeachersPage = () => {
           </div>
         </div>
       )}
+      
+      <div style={{ marginTop: '20px', padding: '20px', background: '#f8f9fa', borderRadius: '8px', borderLeft: '5px solid #27ae60' }}>
+          <h4 style={{ margin: '0 0 15px 0' }}>Live Per-Minute Pay Calculator: {selectedTeacher}</h4>
+          
+          <div style={{ display: 'flex', gap: '15px', alignItems: 'center', marginBottom: '15px' }}>
+              <div>
+                  <label style={{ display: 'block', fontSize: '12px', color: '#666', marginBottom: '4px' }}>In Time</label>
+                  <input type="time" value={inTime} onChange={(e) => setInTime(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ddd' }} />
+              </div>
+              <div>
+                  <label style={{ display: 'block', fontSize: '12px', color: '#666', marginBottom: '4px' }}>Out Time</label>
+                  <input type="time" value={outTime} onChange={(e) => setOutTime(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ddd' }} />
+              </div>
+                  <strong style={{ fontSize: '16px' }}>{calc.hours}h {calc.remMins}m <span style={{ color: '#666', fontSize: '13px', fontWeight: 'normal' }}>({calc.minutes} mins)</span></strong>
+              </div>
+              <div style={{ borderLeft: '1px solid #eee', paddingLeft: '20px' }}>
+                  <div style={{ fontSize: '12px', color: '#888' }}>Base Rate</div>
+                  <strong style={{ fontSize: '14px', color: '#555' }}>₹ 700 / 1.5 hrs</strong>
+                  <div style={{ fontSize: '11px', color: '#888' }}>≈ ₹ 7.78 / minute</div>
+              </div>
+              {calc.deduction > 0 && (
+                  <div style={{ borderLeft: '1px solid #eee', paddingLeft: '20px' }}>
+                      <div style={{ fontSize: '12px', color: '#e74c3c' }}>Late/Early Penalty</div>
+                      <strong style={{ fontSize: '16px', color: '#e74c3c' }}>- ₹ {calc.deduction}</strong>
+                  </div>
+              )}
+              <div style={{ borderLeft: '1px solid #eee', paddingLeft: '20px' }}>
+                  <div style={{ fontSize: '12px', color: '#888' }}>Final Payoff</div>
+                  <strong style={{ fontSize: '20px', color: '#27ae60' }}>₹ {calc.payout}</strong>
+              </div>
+          </div>
+      </div>
     </div>
   );
 };
@@ -1007,11 +1127,17 @@ const DevicesPage = () => {
             width: '48px', height: '48px', borderRadius: '50%',
             background: 'linear-gradient(135deg, #667eea, #764ba2)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            color: 'white', fontWeight: '800', fontSize: '16px', flexShrink: 0
-          }}>{getInitials(resolvedName(toast))}</div>
+            color: 'white', fontWeight: '800', fontSize: '16px', flexShrink: 0, overflow: 'hidden'
+          }}>
+            {toast.photoUrl ? (
+              <img src={toast.photoUrl} alt="Face" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            ) : (
+              getInitials(resolvedName(toast))
+            )}
+          </div>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: '11px', color: '#a0a8c0', fontWeight: '600', letterSpacing: '1px', textTransform: 'uppercase', marginBottom: '4px' }}>
-              🔴 Live Scan Detected
+              🔴 LIVE {toast.verifyMode === '15' ? 'FACE' : 'FINGERPRINT'} SCAN
             </div>
             <div style={{ fontSize: '16px', fontWeight: '700', marginBottom: '2px' }}>
               {resolvedName(toast)}
@@ -1134,12 +1260,12 @@ const DevicesPage = () => {
             background: 'linear-gradient(135deg, #f8f9ff, #f0f4ff)',
             borderRadius: '8px', margin: '10px 0'
           }}>
-            <div style={{ fontSize: '48px', marginBottom: '16px' }}>👆</div>
+            <div style={{ fontSize: '48px', marginBottom: '16px' }}>🧑/👆</div>
             <div style={{ fontSize: '18px', fontWeight: '600', color: '#555', marginBottom: '8px' }}>
-              Waiting for fingerprint scan...
+              Waiting for biometric scan...
             </div>
             <div style={{ fontSize: '14px', color: '#888' }}>
-              Ask someone to scan their fingerprint on the <strong>Bio System (x 2006)</strong> device.<br />
+              Ask someone to scan their face or fingerprint on the <strong>eSSL Device</strong>.<br />
               Their scan will appear here instantly in real time.
             </div>
             <div style={{ marginTop: '20px', display: 'flex', justifyContent: 'center', gap: '8px', alignItems: 'center' }}>

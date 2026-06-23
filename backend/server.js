@@ -55,7 +55,8 @@ const userSchema = new mongoose.Schema({
   subject: { type: String },
   timing: { type: String },
   salary: { type: Number },
-  profession: { type: String }
+  profession: { type: String },
+  photoUrl: { type: String, required: false }
 });
 const User = mongoose.model('User', userSchema);
 
@@ -64,6 +65,7 @@ const punchSchema = new mongoose.Schema({
   timestamp: { type: Date, required: true },
   deviceSn: { type: String, required: true },
   direction: { type: String, enum: ['in', 'out'], default: 'in' },
+  verifyMode: { type: String, default: '1' }, // 1 = Fingerprint, 15 = Face
   createdAt: { type: Date, default: Date.now }
 });
 const Punch = mongoose.model('Punch', punchSchema);
@@ -201,10 +203,12 @@ app.post(['/iclock/cdata', '/iclock/cdata.aspx'], async (req, res) => {
       if (parts.length >= 2) {
         const userId = parts[0].trim();
         const timestamp = parts[1].trim();
-        const verifyMode = parts[2] ? parts[2].trim() : '';
+        const state = parts[2] ? parts[2].trim() : '';
+        const verifyMode = parts[3] ? parts[3].trim() : (state === '15' ? '15' : '');
         
         // Try to resolve user name from DB
         let userName = `User ${userId}`;
+        let photoUrl = '';
         const fallbackNames = {
           '1': 'Admin User',
           '01': 'Admin User',
@@ -220,7 +224,10 @@ app.post(['/iclock/cdata', '/iclock/cdata.aspx'], async (req, res) => {
         if (mongoose.connection.readyState === 1) {
           try {
             const dbUser = await User.findOne({ id: parseInt(userId) });
-            if (dbUser) userName = dbUser.name;
+            if (dbUser) {
+              userName = dbUser.name;
+              photoUrl = dbUser.photoUrl || '';
+            }
           } catch (e) { /* ignore */ }
         } else {
           userName = fallbackNames[userId] || fallbackNames[String(parseInt(userId))] || `User ${userId}`;
@@ -231,7 +238,8 @@ app.post(['/iclock/cdata', '/iclock/cdata.aspx'], async (req, res) => {
           userName,
           timestamp: new Date(timestamp).toLocaleString('en-IN'),
           deviceSn: SN || 'NYU7260401606',
-          verifyMode
+          verifyMode,
+          photoUrl
         };
 
         // Emit the punch live to ALL frontend clients immediately
@@ -241,8 +249,8 @@ app.post(['/iclock/cdata', '/iclock/cdata.aspx'], async (req, res) => {
         // Save to DB if connected
         if (mongoose.connection.readyState === 1) {
           try {
-            await Punch.create({ userId, timestamp: new Date(timestamp), deviceSn: SN || 'unknown', direction: 'in' });
-            console.log(`💾 Saved punch to MongoDB: User ${userId} at ${timestamp}`);
+            await Punch.create({ userId, timestamp: new Date(timestamp), deviceSn: SN || 'unknown', direction: 'in', verifyMode });
+            console.log(`💾 Saved punch to MongoDB: User ${userId} at ${timestamp} (Mode: ${verifyMode})`);
           } catch (dbErr) {
             console.error(`❌ Error saving punch to MongoDB:`, dbErr.message);
           }
