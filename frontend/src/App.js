@@ -91,7 +91,7 @@ const Sidebar = ({ logout, user }) => {
           </div>
           {admOpen && (
             <ul style={{ listStyle: 'none', padding: 0, margin: 0, background: '#1a252f' }}>
-              <li><Link to="/admissions" style={{ display: 'block', padding: '12px 20px 12px 40px', color: '#ecf0f1', textDecoration: 'none', fontSize: '14px', borderBottom: '1px solid #2c3e50', fontWeight: '400' }}>○ Enroll Student</Link></li>
+              <li><Link to="/enroll-student" style={{ display: 'block', padding: '12px 20px 12px 40px', color: '#ecf0f1', textDecoration: 'none', fontSize: '14px', borderBottom: '1px solid #2c3e50', fontWeight: '400' }}>○ Enroll Student</Link></li>
               <li><Link to="/admissions" style={{ display: 'block', padding: '12px 20px 12px 40px', color: '#ecf0f1', textDecoration: 'none', fontSize: '14px', borderBottom: '1px solid #2c3e50', fontWeight: '400' }}>○ Bulk Upload</Link></li>
               <li><Link to="/admissions" style={{ display: 'block', padding: '12px 20px 12px 40px', color: '#ecf0f1', textDecoration: 'none', fontSize: '14px', borderBottom: '1px solid #2c3e50', fontWeight: '400' }}>○ Student List</Link></li>
               <li><Link to="/admissions" style={{ display: 'block', padding: '12px 20px 12px 40px', color: '#ecf0f1', textDecoration: 'none', fontSize: '14px', borderBottom: '1px solid #2c3e50', fontWeight: '400' }}>○ Cancelled List</Link></li>
@@ -163,7 +163,7 @@ const Sidebar = ({ logout, user }) => {
         </li>
 
         <li><Link to="/attendance" style={{ display: 'block', padding: '15px 20px', color: '#ffffff', textDecoration: 'none', borderBottom: '1px solid #34495e', fontWeight: '500', fontSize: '15px' }}>📋 Attendance</Link></li>
-        <li><Link to="/teachers" style={{ display: 'block', padding: '15px 20px', color: '#ffffff', textDecoration: 'none', borderBottom: '1px solid #34495e', fontWeight: '500', fontSize: '15px' }}>👨🏫 Teachers</Link></li>
+        <li><Link to="/teachers" style={{ display: 'block', padding: '15px 20px', color: '#ffffff', textDecoration: 'none', borderBottom: '1px solid #34495e', fontWeight: '500', fontSize: '15px' }}>👨‍🏫 Teachers & Staff</Link></li>
         <li><Link to="/devices" style={{ display: 'block', padding: '15px 20px', color: '#ffffff', textDecoration: 'none', borderBottom: '1px solid #34495e', fontWeight: '500', fontSize: '15px' }}>🔒 Devices</Link></li>
         <li><Link to="/simulator" style={{ display: 'block', padding: '15px 20px', color: '#ffffff', textDecoration: 'none', borderBottom: '1px solid #34495e', fontWeight: '500', fontSize: '15px' }}>🔬 Simulator</Link></li>
         <li style={{ padding: '15px 20px' }}>
@@ -402,22 +402,6 @@ const Dashboard = () => {
                     </tr>
                 </thead>
                 <tbody id="attendanceTable">
-                    {livePunches.map((punch, idx) => (
-                        <tr key={`live-${idx}`} style={{ background: '#f8f9ff', animation: 'punchSlide 0.5s ease-out' }}>
-                            <td>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                    <div className="avatar" style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
-                                        {getInitials(resolvedName(punch))}
-                                    </div>
-                                    {resolvedName(punch)} <span style={{ fontSize: '10px', background: '#667eea', color: 'white', padding: '2px 6px', borderRadius: '10px', marginLeft: '5px' }}>NEW</span>
-                                </div>
-                            </td>
-                            <td>User</td>
-                            <td>{punch.time || punch.timestamp}</td>
-                            <td>--:-- --</td>
-                            <td><span className="status present">Present</span></td>
-                        </tr>
-                    ))}
                     <tr>
                         <td><div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}><div className="avatar">A</div> Ahmed Khan</div></td>
                         <td>Teacher</td>
@@ -624,6 +608,14 @@ const AttendancePage = () => {
   );
 };
 
+const EnrollStudentPage = () => {
+  return (
+    <div style={{ height: 'calc(100vh - 100px)', width: '100%', padding: '0px' }}>
+      <iframe src="/enrollment.html" style={{ width: '100%', height: '100%', border: 'none', borderRadius: '12px' }} title="Enroll Student"></iframe>
+    </div>
+  );
+};
+
 const AdmissionsPage = () => {
   return (
     <div className="dashboard-card">
@@ -687,54 +679,139 @@ const AdmissionsPage = () => {
 };
 
 const TeachersPage = () => {
+  const [teachers, setTeachers] = useState([]);
+  const [showModal, setShowModal] = useState(false);
+  
+  // Form State
+  const [role, setRole] = useState('teacher');
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [fingerprintId, setFingerprintId] = useState('');
+  const [experience, setExperience] = useState('');
+  const [subject, setSubject] = useState('');
+  const [timing, setTiming] = useState('');
+  const [salary, setSalary] = useState('');
+  const [profession, setProfession] = useState('');
+
+  const fetchTeachers = () => {
+    api.get('/users').then(res => {
+      setTeachers(res.data.filter(u => u.role === 'teacher' || u.role === 'staff'));
+    }).catch(err => console.error(err));
+  };
+
+  useEffect(() => {
+    fetchTeachers();
+  }, []);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    try {
+      await api.post('/users/enroll', { name, email, role, fingerprint_id: fingerprintId, experience, subject, timing, salary, profession });
+      setShowModal(false);
+      setName(''); setEmail(''); setFingerprintId(''); setExperience(''); setSubject(''); setTiming(''); setSalary(''); setProfession('');
+      fetchTeachers();
+    } catch (err) {
+      alert("Error adding " + role + ": " + (err.response?.data?.error || err.message));
+    }
+  };
+
   return (
     <div className="dashboard-card">
       <div className="card-header">
-          <h2>👨🏫 Teachers & Salary Panel</h2>
+          <h2>👨‍🏫 Teachers & Staff Panel</h2>
           <div className="actions">
-              <button className="btn btn-primary">Add Teacher</button>
+              <button className="btn btn-primary" onClick={() => setShowModal(true)}>Add Teacher/Staff</button>
               <button className="btn btn-warning">Run Payroll</button>
           </div>
       </div>
       <table className="dashboard-table">
           <thead>
               <tr>
-                  <th>Teacher Name</th>
-                  <th>Department</th>
+                  <th>Name</th>
+                  <th>Role</th>
+                  <th>Subject/Profession</th>
                   <th>Base Salary</th>
-                  <th>Monthly Attendance</th>
+                  <th>Biometric ID</th>
                   <th>Actions</th>
               </tr>
           </thead>
           <tbody>
-              <tr>
-                  <td><div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}><div className="avatar">A</div> Ahmed Khan</div></td>
-                  <td>Mathematics</td>
-                  <td>₹ 45,000</td>
-                  <td><span style={{ color: '#27ae60', fontWeight: 'bold' }}>20/22 Days</span></td>
-                  <td><button className="btn btn-warning" style={{ padding: '4px 10px' }}>💰 Calculate Cut</button></td>
-              </tr>
-              <tr>
-                  <td><div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}><div className="avatar" style={{ background: '#e74c3c' }}>M</div> Mrs. Patel</div></td>
-                  <td>Science</td>
-                  <td>₹ 48,000</td>
-                  <td><span style={{ color: '#e74c3c', fontWeight: 'bold' }}>15/22 Days</span></td>
-                  <td><button className="btn btn-warning" style={{ padding: '4px 10px' }}>💰 Calculate Cut</button></td>
-              </tr>
-              <tr>
-                  <td><div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}><div className="avatar">D</div> Dr. Khan</div></td>
-                  <td>Physics</td>
-                  <td>₹ 55,000</td>
-                  <td><span style={{ color: '#27ae60', fontWeight: 'bold' }}>22/22 Days</span></td>
-                  <td><button className="btn btn-warning" style={{ padding: '4px 10px' }}>💰 Calculate Cut</button></td>
-              </tr>
+              {teachers.map(t => (
+                <tr key={t.id}>
+                    <td><div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}><div className="avatar">{t.name.charAt(0)}</div> {t.name}</div></td>
+                    <td style={{ textTransform: 'capitalize' }}>{t.role}</td>
+                    <td>{t.role === 'teacher' ? (t.subject || 'N/A') : (t.profession || 'N/A')}</td>
+                    <td>₹ {t.salary ? t.salary.toLocaleString('en-IN') : '0'}</td>
+                    <td><code style={{ background: '#f0f2f5', padding: '4px 8px', borderRadius: '4px' }}>{t.fingerprint_id}</code></td>
+                    <td><button className="btn btn-warning" style={{ padding: '4px 10px' }}>💰 Details</button></td>
+                </tr>
+              ))}
+              {teachers.length === 0 && (
+                <tr>
+                  <td colSpan="5" style={{ textAlign: 'center', padding: '20px', color: '#888' }}>No teachers or staff found.</td>
+                </tr>
+              )}
           </tbody>
       </table>
       
-      <div style={{ marginTop: '20px', padding: '15px', background: '#f8f9fa', borderRadius: '8px', borderLeft: '5px solid #27ae60' }}>
-          <h4 style={{ margin: '0 0 5px 0' }}>Preview Calculation: Mrs. Patel</h4>
-          <p style={{ margin: '0', fontSize: '14px', color: '#666' }}>Base: ₹48,000 | Absences: 7 Days | Deduction: ₹15,272 | <strong>Net Payable: ₹32,728</strong></p>
-      </div>
+      {showModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 999 }}>
+          <div style={{ background: 'white', padding: '30px', borderRadius: '12px', width: '450px', boxShadow: '0 4px 20px rgba(0,0,0,0.2)' }}>
+            <h3 style={{ marginTop: 0, marginBottom: '15px' }}>👤 Add New Member</h3>
+            <form onSubmit={handleSubmit}>
+              <div style={{ display: 'flex', gap: '10px', marginBottom: '15px' }}>
+                <label style={{ flex: 1 }}>
+                  Role:
+                  <select value={role} onChange={e => setRole(e.target.value)} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ddd', marginTop: '5px' }}>
+                    <option value="teacher">Teacher</option>
+                    <option value="staff">Staff</option>
+                  </select>
+                </label>
+                <label style={{ flex: 1 }}>
+                  Biometric ID: *
+                  <input type="number" value={fingerprintId} onChange={e => setFingerprintId(e.target.value)} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ddd', marginTop: '5px' }} required />
+                </label>
+              </div>
+              
+              <div style={{ marginBottom: '15px' }}>
+                <input type="text" placeholder="Full Name *" value={name} onChange={e => setName(e.target.value)} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ddd' }} required />
+              </div>
+              
+              <div style={{ marginBottom: '15px' }}>
+                <input type="email" placeholder="Email Address" value={email} onChange={e => setEmail(e.target.value)} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ddd' }} />
+              </div>
+              
+              <div style={{ marginBottom: '15px' }}>
+                <input type="number" placeholder="Base Salary (₹)" value={salary} onChange={e => setSalary(e.target.value)} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ddd' }} />
+              </div>
+
+              {role === 'teacher' && (
+                <div style={{ background: '#f8f9fa', padding: '15px', borderRadius: '8px', marginBottom: '20px', border: '1px solid #eee' }}>
+                  <h4 style={{ margin: '0 0 10px 0', fontSize: '13px', color: '#555', textTransform: 'uppercase' }}>Teacher Details</h4>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                    <input type="text" placeholder="Topic / Subject" value={subject} onChange={e => setSubject(e.target.value)} style={{ padding: '10px', borderRadius: '6px', border: '1px solid #ddd' }} />
+                    <input type="text" placeholder="Timing (e.g. 9 AM - 1 PM)" value={timing} onChange={e => setTiming(e.target.value)} style={{ padding: '10px', borderRadius: '6px', border: '1px solid #ddd' }} />
+                  </div>
+                </div>
+              )}
+
+              {role === 'staff' && (
+                <div style={{ background: '#f8f9fa', padding: '15px', borderRadius: '8px', marginBottom: '20px', border: '1px solid #eee' }}>
+                  <h4 style={{ margin: '0 0 10px 0', fontSize: '13px', color: '#555', textTransform: 'uppercase' }}>Staff Details</h4>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '10px' }}>
+                    <input type="text" placeholder="Profession (e.g. Receptionist, Security)" value={profession} onChange={e => setProfession(e.target.value)} style={{ padding: '10px', borderRadius: '6px', border: '1px solid #ddd' }} />
+                  </div>
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '10px' }}>
+                <button type="button" className="btn" style={{ background: '#eee', color: '#333' }} onClick={() => setShowModal(false)}>Cancel</button>
+                <button type="submit" className="btn btn-primary">Save Member</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -1174,6 +1251,7 @@ function App() {
             <Route path="/" element={<ProtectedRoute><Layout logout={logout} user={user}><Dashboard /></Layout></ProtectedRoute>} />
             <Route path="/attendance" element={<ProtectedRoute><Layout logout={logout} user={user}><AttendancePage /></Layout></ProtectedRoute>} />
             <Route path="/admissions" element={<ProtectedRoute><Layout logout={logout} user={user}><AdmissionsPage /></Layout></ProtectedRoute>} />
+            <Route path="/enroll-student" element={<ProtectedRoute><Layout logout={logout} user={user}><EnrollStudentPage /></Layout></ProtectedRoute>} />
             <Route path="/teachers" element={<ProtectedRoute><Layout logout={logout} user={user}><TeachersPage /></Layout></ProtectedRoute>} />
             <Route path="/devices" element={<ProtectedRoute><Layout logout={logout} user={user}><DevicesPage /></Layout></ProtectedRoute>} />
             <Route path="/simulator" element={<ProtectedRoute><Layout logout={logout} user={user}><Simulator /></Layout></ProtectedRoute>} />
