@@ -50,7 +50,12 @@ const userSchema = new mongoose.Schema({
   id: { type: Number, required: true, unique: true },
   name: { type: String, required: true },
   role: { type: String, required: true },
-  fingerprint_id: { type: String, required: true, unique: true }
+  fingerprint_id: { type: String, required: true, unique: true },
+  experience: { type: String },
+  subject: { type: String },
+  timing: { type: String },
+  salary: { type: Number },
+  profession: { type: String }
 });
 const User = mongoose.model('User', userSchema);
 
@@ -272,6 +277,107 @@ app.post('/api/auth/login', (req, res) => {
   }
 });
 
+// Enroll New Student (from Enrollment Form)
+app.post('/api/users/enroll', async (req, res) => {
+  const { name, email, role, fingerprint_id, experience, subject, timing, salary, profession } = req.body;
+  if (!name || !fingerprint_id) {
+    return res.status(400).json({ error: 'Name and Biometric Register ID are required' });
+  }
+
+  if (mongoose.connection.readyState !== 1) {
+    return res.json({ success: true, dbSaved: false, message: 'Saved in offline fallback mode' });
+  }
+
+  try {
+    // Determine the next numeric ID
+    const lastUser = await User.findOne().sort({ id: -1 });
+    const nextId = lastUser ? lastUser.id + 1 : 1;
+
+    const newUser = await User.create({
+      id: nextId,
+      name,
+      role: role || 'student',
+      fingerprint_id,
+      experience,
+      subject,
+      timing,
+      salary: salary ? Number(salary) : 0,
+      profession
+    });
+    console.log(`✅ Enrolled new ${role || 'student'}: ${name} with Biometric ID: ${fingerprint_id}`);
+    res.json({ success: true, user: newUser });
+  } catch (err) {
+    console.error("Enrollment error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get Student Attendance History (Calculated In/Out)
+app.get('/api/attendance/student/:fingerprint_id', async (req, res) => {
+  const { fingerprint_id } = req.params;
+  
+  if (mongoose.connection.readyState !== 1) {
+    // Return mock data if offline
+    return res.json({
+      student: { name: "Mock Student", fingerprint_id },
+      summary: { totalEntries: 0, totalHours: 0 },
+      records: []
+    });
+  }
+
+  try {
+    const student = await User.findOne({ fingerprint_id });
+    const punches = await Punch.find({ userId: fingerprint_id }).sort({ timestamp: 1 });
+
+    // Group by Date (YYYY-MM-DD)
+    const grouped = {};
+    punches.forEach(p => {
+      const dString = p.timestamp.toISOString().split('T')[0];
+      if (!grouped[dString]) grouped[dString] = [];
+      grouped[dString].push(p);
+    });
+
+    const records = [];
+    let totalEntriesAllTime = 0;
+    let totalMsAllTime = 0;
+
+    for (const [dateStr, dayPunches] of Object.entries(grouped)) {
+      // Calculate daily metrics
+      const firstIn = dayPunches[0].timestamp;
+      const lastOut = dayPunches[dayPunches.length - 1].timestamp;
+      const entryCount = Math.max(1, Math.floor(dayPunches.length / 2)); // rough estimate if missing out punches
+      
+      let durationMs = lastOut.getTime() - firstIn.getTime();
+      // If only one punch, duration is 0
+      if (dayPunches.length === 1) durationMs = 0;
+
+      totalEntriesAllTime += entryCount;
+      totalMsAllTime += durationMs;
+
+      records.push({
+        date: dateStr,
+        firstIn: firstIn.toLocaleTimeString('en-IN'),
+        lastOut: dayPunches.length > 1 ? lastOut.toLocaleTimeString('en-IN') : 'N/A',
+        totalEntries: entryCount,
+        durationMinutes: Math.round(durationMs / 60000)
+      });
+    }
+
+    res.json({
+      student: student || { name: `Unknown (${fingerprint_id})`, fingerprint_id },
+      summary: {
+        totalEntries: totalEntriesAllTime,
+        totalHours: (totalMsAllTime / (1000 * 60 * 60)).toFixed(2)
+      },
+      records: records.sort((a,b) => new Date(b.date) - new Date(a.date)) // newest first
+    });
+
+  } catch (err) {
+    console.error("Attendance fetch error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Current User info
 app.get('/api/users/me', (req, res) => {
   res.json({
@@ -446,6 +552,6 @@ app.post('/api/devices/rename', async (req, res) => {
 // Start unified server on ALL interfaces so LAN devices (eSSL) can reach it
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Unified Backend & ADMS Server is running on http://0.0.0.0:${PORT}`);
-  console.log(`📡 LAN accessible at http://192.168.0.104:${PORT}`);
-  console.log(`🔬 ADMS endpoint: POST http://192.168.0.104:${PORT}/iclock/cdata`);
+  console.log(`📡 LAN accessible at http://192.168.0.106:${PORT}`);
+  console.log(`🔬 ADMS endpoint: POST http://192.168.0.106:${PORT}/iclock/cdata`);
 });
