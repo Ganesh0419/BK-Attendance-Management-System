@@ -4,6 +4,8 @@ const cors = require('cors');
 const http = require('http');
 const { Server } = require('socket.io');
 const mongoose = require('mongoose');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
@@ -11,8 +13,21 @@ const server = http.createServer(app);
 // Enable CORS for Socket.io and Express
 app.use(cors());
 
-// Parse biometric device raw plain text requests only on /iclock routes
-app.use('/iclock', express.text({ type: '*/*' }));
+// Setup static directory for uploaded punch photos
+const UPLOADS_DIR = path.join(__dirname, 'uploads');
+if (!fs.existsSync(UPLOADS_DIR)) {
+  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+}
+app.use('/uploads', express.static(UPLOADS_DIR));
+
+// Parse biometric device requests conditionally (raw buffer for photos, text for logs)
+app.use('/iclock', (req, res, next) => {
+  if (req.query.table === 'ATTPHOTO' || req.query.table === 'BIOPHOTO') {
+    express.raw({ type: '*/*', limit: '15mb' })(req, res, next);
+  } else {
+    express.text({ type: '*/*', limit: '10mb' })(req, res, next);
+  }
+});
 
 // Parse JSON body for all standard API requests
 app.use(express.json());
@@ -44,6 +59,66 @@ mongoose.connect(mongoUri, {
     console.error('❌ MongoDB Connection Error:', err.message);
     console.log('⚠️ Running in mock fallback mode due to database offline.');
   });
+<<<<<<< Updated upstream
+=======
+const LOCAL_DB_PATH = path.join(__dirname, 'users.json');
+const LOCAL_PUNCHES_DB_PATH = path.join(__dirname, 'punches.json');
+
+function initLocalPunches() {
+  if (!fs.existsSync(LOCAL_PUNCHES_DB_PATH)) {
+    fs.writeFileSync(LOCAL_PUNCHES_DB_PATH, JSON.stringify([], null, 2));
+    console.log('🌱 Initialized local punches JSON file database');
+  }
+}
+initLocalPunches();
+
+function getLocalPunches() {
+  try {
+    return JSON.parse(fs.readFileSync(LOCAL_PUNCHES_DB_PATH, 'utf8'));
+  } catch (e) {
+    return [];
+  }
+}
+
+function saveLocalPunches(punches) {
+  try {
+    fs.writeFileSync(LOCAL_PUNCHES_DB_PATH, JSON.stringify(punches, null, 2));
+  } catch (e) {
+    console.error('❌ Error saving local punches:', e);
+  }
+}
+
+const pendingCommands = {};
+
+function queueCommand(sn, cmdText) {
+  if (!pendingCommands[sn]) pendingCommands[sn] = [];
+  pendingCommands[sn].push(cmdText);
+}
+
+function initLocalUsers() {
+  if (!fs.existsSync(LOCAL_DB_PATH)) {
+    fs.writeFileSync(LOCAL_DB_PATH, JSON.stringify([], null, 2));
+    console.log('🌱 Initialized local users JSON file database');
+  }
+}
+initLocalUsers();
+
+function getLocalUsers() {
+  try {
+    return JSON.parse(fs.readFileSync(LOCAL_DB_PATH, 'utf8'));
+  } catch (e) {
+    return [];
+  }
+}
+
+function saveLocalUsers(users) {
+  try {
+    fs.writeFileSync(LOCAL_DB_PATH, JSON.stringify(users, null, 2));
+  } catch (e) {
+    console.error('❌ Error saving local users:', e);
+  }
+}
+>>>>>>> Stashed changes
 
 // --- Database Schemas & Models ---
 const userSchema = new mongoose.Schema({
@@ -51,6 +126,7 @@ const userSchema = new mongoose.Schema({
   name: { type: String, required: true },
   role: { type: String, required: true },
   fingerprint_id: { type: String, required: true, unique: true },
+<<<<<<< Updated upstream
   experience: { type: String },
   subject: { type: String },
   timing: { type: String },
@@ -95,6 +171,7 @@ const punchSchema = new mongoose.Schema({
   timestamp: { type: Date, required: true },
   deviceSn: { type: String, required: true },
   direction: { type: String, enum: ['in', 'out'], default: 'in' },
+  verifyMode: { type: String, default: '1' }, // 1 = Fingerprint, 15 = Face
   createdAt: { type: Date, default: Date.now }
 });
 const Punch = mongoose.model('Punch', punchSchema);
@@ -114,22 +191,35 @@ const deviceSchema = new mongoose.Schema({
 });
 const Device = mongoose.model('Device', deviceSchema);
 
-// Seed default users if DB is empty
+// Seed default users if DB is empty or update existing
 async function seedUsers() {
   try {
+<<<<<<< Updated upstream
     const count = await User.countDocuments();
     if (count === 0) {
-      await User.insertMany([
-        { id: 1, name: 'Admin User', role: 'admin', fingerprint_id: '111' },
-        { id: 2, name: 'John Doe', role: 'student', fingerprint_id: '222' },
-        { id: 3, name: 'Ahmed Khan', role: 'teacher', fingerprint_id: '333' },
-        { id: 4, name: 'Sarah Ali', role: 'student', fingerprint_id: '444' },
-        { id: 5, name: 'Mrs. Patel', role: 'teacher', fingerprint_id: '555' }
-      ]);
+      console.log('Skipping fake user seeding. Clean database ready.');
       console.log('🌱 Seeded default users to MongoDB');
+=======
+    // Unset the old photoUrl field from all users in MongoDB
+    await User.updateMany({}, { $unset: { photoUrl: "" } });
+    
+    const localUsers = getLocalUsers();
+    for (const user of localUsers) {
+      await User.findOneAndUpdate(
+        { id: user.id },
+        { 
+          name: user.name,
+          role: user.role,
+          fingerprint_id: user.fingerprint_id,
+          photo: user.photo || null
+        },
+        { upsert: true, new: true }
+      );
+>>>>>>> Stashed changes
     }
+    console.log(`🌱 Synchronized ${localUsers.length} users from users.json to MongoDB`);
   } catch (err) {
-    console.error('❌ Error seeding users:', err.message);
+    console.error('❌ Error seeding/synchronizing users:', err.message);
   }
 }
 
@@ -217,6 +307,73 @@ app.get(['/iclock/ping', '/iclock/ping.aspx'], async (req, res) => {
   res.send('OK');
 });
 
+// Helper function to parse biometric photo upload request bodies
+function parsePhotoRequest(req) {
+  const buffer = req.body;
+  if (!Buffer.isBuffer(buffer) || buffer.length === 0) {
+    return null;
+  }
+
+  // 1. Check if raw JPEG buffer (starts with FF D8 FF)
+  if (buffer.length > 2 && buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) {
+    return {
+      pin: req.query.PIN || req.query.pin || req.query.UserPIN || '',
+      sn: req.query.SN || '',
+      size: buffer.length,
+      imageBuffer: buffer
+    };
+  }
+
+  // 2. Check for ZK ADMS custom binary format with null separator
+  const nullByteIndex = buffer.indexOf(0x00);
+  if (nullByteIndex !== -1 && nullByteIndex < 1000) {
+    const textPart = buffer.toString('utf8', 0, nullByteIndex);
+    const binaryData = buffer.slice(nullByteIndex + 1);
+    
+    const lines = textPart.split(/\r?\n/);
+    const metadata = {};
+    for (const line of lines) {
+      const eqIdx = line.indexOf('=');
+      if (eqIdx !== -1) {
+        const key = line.substring(0, eqIdx).trim().toLowerCase();
+        const val = line.substring(eqIdx + 1).trim();
+        metadata[key] = val;
+      }
+    }
+    
+    if (metadata['pin'] || metadata['size']) {
+      return {
+        pin: metadata['pin'] || '',
+        sn: metadata['sn'] || req.query.SN || '',
+        size: parseInt(metadata['size']) || binaryData.length,
+        imageBuffer: binaryData
+      };
+    }
+  }
+
+  // 3. Check for URL-encoded string format (PIN=...&PhotoContent=...)
+  try {
+    const bodyStr = buffer.toString('utf8');
+    if (bodyStr.includes('PIN=') && (bodyStr.includes('PhotoContent=') || bodyStr.includes('Content='))) {
+      const params = new URLSearchParams(bodyStr);
+      const pin = params.get('PIN') || params.get('pin') || '';
+      const base64Content = params.get('PhotoContent') || params.get('Content') || '';
+      const cleanedBase64 = base64Content.replace(/\s/g, '+');
+      const imageBuffer = Buffer.from(cleanedBase64, 'base64');
+      return {
+        pin,
+        sn: req.query.SN || '',
+        size: imageBuffer.length,
+        imageBuffer
+      };
+    }
+  } catch (e) {
+    // Ignore error
+  }
+
+  return null;
+}
+
 // 5. Device pushing Attendance Data (Punches)
 app.post(['/iclock/cdata', '/iclock/cdata.aspx'], async (req, res) => {
   const { SN, table } = req.query;
@@ -225,6 +382,70 @@ app.post(['/iclock/cdata', '/iclock/cdata.aspx'], async (req, res) => {
   console.log(`[ADMS] 📥 Incoming Data from Device: ${SN} (Type: ${table})`);
   await trackDeviceActivity(SN);
   
+  if (table === 'ATTPHOTO' || table === 'BIOPHOTO') {
+    const parsed = parsePhotoRequest(req);
+    if (parsed && parsed.imageBuffer && parsed.imageBuffer.length > 0) {
+      let pinStr = String(parsed.pin);
+      let userId = pinStr;
+      if (pinStr.includes('-')) {
+        const parts = pinStr.split('-');
+        userId = parts[parts.length - 1].trim();
+      }
+      
+      const timestamp = Date.now();
+      const filename = `punch_${userId}_${timestamp}.jpg`;
+      const filepath = path.join(UPLOADS_DIR, filename);
+      
+      try {
+        fs.writeFileSync(filepath, parsed.imageBuffer);
+        const relativePath = `/uploads/${filename}`;
+        
+        console.log(`📸 [ADMS] Saved photo for User ${userId} (from PIN: ${parsed.pin}) to ${relativePath}`);
+        
+        // 1. Update user profile photo in MongoDB
+        if (mongoose.connection.readyState === 1) {
+          try {
+            await User.findOneAndUpdate(
+              { id: parseInt(userId) },
+              { photo: relativePath }
+            );
+            await User.findOneAndUpdate(
+              { fingerprint_id: String(userId) },
+              { photo: relativePath }
+            );
+          } catch (dbErr) {
+            console.error(`❌ MongoDB error updating photo for User ${userId}:`, dbErr.message);
+          }
+        }
+        
+        // 2. Update local users.json file
+        try {
+          const localUsers = getLocalUsers();
+          const userIdx = localUsers.findIndex(u => u.id === parseInt(userId) || String(u.id) === String(userId) || u.fingerprint_id === String(userId));
+          if (userIdx > -1) {
+            localUsers[userIdx].photo = relativePath;
+            saveLocalUsers(localUsers);
+          }
+        } catch (fileErr) {
+          console.error(`❌ File error updating photo for User ${userId}:`, fileErr.message);
+        }
+        
+        // 3. Emit the socket update to all connected clients
+        io.emit('live_punch_photo', {
+          userId: String(userId),
+          userPhoto: relativePath
+        });
+        
+      } catch (err) {
+        console.error(`❌ Error writing upload photo to disk:`, err.message);
+      }
+    } else {
+      console.log(`⚠️ [ADMS] Photo upload received but could not parse. Buffer Length: ${Buffer.isBuffer(req.body) ? req.body.length : 0}`);
+    }
+    
+    return res.send("OK");
+  }
+
   if (table === 'ATTLOG') {
     console.log("\n=== New Live Punch! ===");
     console.log(body);
@@ -239,37 +460,53 @@ app.post(['/iclock/cdata', '/iclock/cdata.aspx'], async (req, res) => {
       if (parts.length >= 2) {
         const userId = parts[0].trim();
         const timestamp = parts[1].trim();
-        const verifyMode = parts[2] ? parts[2].trim() : '';
+        const state = parts[2] ? parts[2].trim() : '';
+        const verifyMode = parts[3] ? parts[3].trim() : (state === '15' ? '15' : '');
         
-        // Try to resolve user name from DB
+        // Try to resolve user name and photo from DB
         let userName = `User ${userId}`;
-        const fallbackNames = {
-          '1': 'Admin User',
-          '01': 'Admin User',
-          '2': 'John Doe',
-          '02': 'John Doe',
-          '3': 'Ahmed Khan',
-          '03': 'Ahmed Khan',
-          '4': 'Sarah Ali',
-          '04': 'Sarah Ali',
-          '5': 'Mrs. Patel',
-          '05': 'Mrs. Patel'
-        };
+<<<<<<< Updated upstream
+        let photoUrl = '';
+        const fallbackNames = {};
+=======
+        let userPhoto = null;
+>>>>>>> Stashed changes
         if (mongoose.connection.readyState === 1) {
           try {
-            const dbUser = await User.findOne({ id: parseInt(userId) });
-            if (dbUser) userName = dbUser.name;
+            let dbUser = await User.findOne({ id: parseInt(userId) });
+            if (!dbUser) {
+              dbUser = await User.findOne({ fingerprint_id: String(userId) });
+            }
+            if (dbUser) {
+              userName = dbUser.name;
+<<<<<<< Updated upstream
+              photoUrl = dbUser.photoUrl || '';
+            }
           } catch (e) { /* ignore */ }
         } else {
           userName = fallbackNames[userId] || fallbackNames[String(parseInt(userId))] || `User ${userId}`;
+=======
+              userPhoto = dbUser.photo;
+            }
+          } catch (e) { /* ignore */ }
+        } else {
+          const localUsers = getLocalUsers();
+          const dbUser = localUsers.find(u => u.id === parseInt(userId) || String(u.id) === String(userId) || u.fingerprint_id === String(userId));
+          if (dbUser) {
+            userName = dbUser.name;
+            userPhoto = dbUser.photo;
+          }
+>>>>>>> Stashed changes
         }
 
         const punchPayload = {
           userId,
           userName,
+          userPhoto,
           timestamp: new Date(timestamp).toLocaleString('en-IN'),
           deviceSn: SN || 'NYU7260401606',
-          verifyMode
+          verifyMode,
+          photoUrl
         };
 
         // Emit the punch live to ALL frontend clients immediately
@@ -279,8 +516,8 @@ app.post(['/iclock/cdata', '/iclock/cdata.aspx'], async (req, res) => {
         // Save to DB if connected
         if (mongoose.connection.readyState === 1) {
           try {
-            await Punch.create({ userId, timestamp: new Date(timestamp), deviceSn: SN || 'unknown', direction: 'in' });
-            console.log(`💾 Saved punch to MongoDB: User ${userId} at ${timestamp}`);
+            await Punch.create({ userId, timestamp: new Date(timestamp), deviceSn: SN || 'unknown', direction: 'in', verifyMode });
+            console.log(`💾 Saved punch to MongoDB: User ${userId} at ${timestamp} (Mode: ${verifyMode})`);
           } catch (dbErr) {
             console.error(`❌ Error saving punch to MongoDB:`, dbErr.message);
           }
@@ -519,6 +756,49 @@ app.get('/api/users', async (req, res) => {
   }
 });
 
+<<<<<<< Updated upstream
+=======
+// Add or update a user (both DB and local JSON database fallback supported)
+app.post('/api/users', async (req, res) => {
+  const { id, name, role, fingerprint_id, photo } = req.body;
+  if (!id || !name) {
+    return res.status(400).json({ error: 'id and name are required' });
+  }
+
+  const userPayload = {
+    id: parseInt(id),
+    name,
+    role: role || 'student',
+    fingerprint_id: fingerprint_id || String(id),
+    photo: photo || null
+  };
+
+  if (mongoose.connection.readyState === 1) {
+    try {
+      const user = await User.findOneAndUpdate(
+        { id: parseInt(id) },
+        userPayload,
+        { upsert: true, new: true }
+      );
+      return res.json({ success: true, user });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  } else {
+    // Offline mode JSON database update
+    const localUsers = getLocalUsers();
+    const existingIndex = localUsers.findIndex(u => u.id === parseInt(id));
+    if (existingIndex > -1) {
+      localUsers[existingIndex] = { ...localUsers[existingIndex], ...userPayload };
+    } else {
+      localUsers.push(userPayload);
+    }
+    saveLocalUsers(localUsers);
+    return res.json({ success: true, user: userPayload });
+  }
+});
+
+>>>>>>> Stashed changes
 // User ID -> Name mapping for Live Sync Feed
 app.get('/api/users/map', async (req, res) => {
   if (mongoose.connection.readyState !== 1) {
@@ -540,13 +820,45 @@ app.get('/api/users/map', async (req, res) => {
 
 // Biometric Webhook (Simulator punches)
 app.post('/api/biometric/webhook', async (req, res) => {
-  const { fingerprint_id, timestamp, direction } = req.body;
+  const { fingerprint_id, timestamp, direction, verifyMode } = req.body;
+  
+<<<<<<< Updated upstream
+  // Emit live punch to frontend via socket immediately (enables real-time simulator updates)
+  io.emit('live_punch', {
+    userId: fingerprint_id,
+=======
+  let userName = `User ${fingerprint_id}`;
+  let userPhoto = null;
+
+  if (mongoose.connection.readyState === 1) {
+    try {
+      let dbUser = await User.findOne({ fingerprint_id });
+      if (!dbUser) {
+        dbUser = await User.findOne({ id: parseInt(fingerprint_id) });
+      }
+      if (dbUser) {
+        userName = dbUser.name;
+        userPhoto = dbUser.photo;
+      }
+    } catch (e) { /* ignore */ }
+  } else {
+    const localUsers = getLocalUsers();
+    const dbUser = localUsers.find(u => u.fingerprint_id === String(fingerprint_id) || String(u.id) === String(fingerprint_id));
+    if (dbUser) {
+      userName = dbUser.name;
+      userPhoto = dbUser.photo;
+    }
+  }
   
   // Emit live punch to frontend via socket immediately (enables real-time simulator updates)
   io.emit('live_punch', {
     userId: fingerprint_id,
+    userName,
+    userPhoto,
+>>>>>>> Stashed changes
     timestamp: new Date(timestamp).toLocaleString(),
-    deviceSn: 'Simulator'
+    deviceSn: 'Simulator',
+    verifyMode: verifyMode || '1'
   });
 
   // Graceful Fallback if MongoDB is offline

@@ -4,7 +4,8 @@ import ReceiptPrintView from './ReceiptPrintView';
 import { io } from 'socket.io-client';
 import api from './api';
 
-const socket = io('http://localhost:8080');
+const backendHost = window.location.hostname;
+const socket = io(`http://${backendHost}:8080`);
 const AuthContext = React.createContext(null);
 
 // --- LOGIN PAGE ---
@@ -207,7 +208,7 @@ const Dashboard = () => {
   const [users, setUsers] = useState([]);
   const [recent, setRecent] = useState([]);
   const [livePunches, setLivePunches] = useState([]);
-  const [userMap, setUserMap] = useState({});
+  const [users, setUsers] = useState([]);
   const [lastScanToast, setLastScanToast] = useState(null);
   const toastRef = React.useRef(null);
 
@@ -219,7 +220,7 @@ const Dashboard = () => {
     });
 
     // Load user ID → name map
-    api.get('/users/map').then(res => setUserMap(res.data)).catch(() => {});
+    api.get('/users').then(res => setUsers(res.data)).catch(() => {});
 
     const handlePunch = (data) => {
       const entry = { ...data, id: Date.now(), time: new Date().toLocaleTimeString() };
@@ -229,9 +230,36 @@ const Dashboard = () => {
       toastRef.current = setTimeout(() => setLastScanToast(null), 5000);
     };
 
+    const handlePunchPhoto = (data) => {
+      setLivePunches(prev => prev.map(p => {
+        if (String(p.userId) === String(data.userId)) {
+          return { ...p, userPhoto: data.userPhoto };
+        }
+        return p;
+      }));
+
+      setLastScanToast(prev => {
+        if (prev && String(prev.userId) === String(data.userId)) {
+          return { ...prev, userPhoto: data.userPhoto };
+        }
+        return prev;
+      });
+
+      
+
+      setUsers(prev => prev.map(u => {
+        if (String(u.id) === String(data.userId) || String(u.fingerprint_id) === String(data.userId)) {
+          return { ...u, photo: data.userPhoto };
+        }
+        return u;
+      }));
+    };
+
     socket.on('live_punch', handlePunch);
+    socket.on('live_punch_photo', handlePunchPhoto);
     return () => {
       socket.off('live_punch', handlePunch);
+      socket.off('live_punch_photo', handlePunchPhoto);
       if (toastRef.current) clearTimeout(toastRef.current);
     };
   }, []);
@@ -239,7 +267,28 @@ const Dashboard = () => {
   if (!stats) return <div>Loading dashboard...</div>;
 
   const getInitials = (name) => name ? name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0,2) : '??';
-  const resolvedName = (punch) => punch.userName || userMap[String(punch.userId)] || `User ${punch.userId}`;
+  
+  const resolvedName = (punch) => {
+    const user = users.find(u => String(u.id) === String(punch.userId) || String(u.fingerprint_id) === String(punch.userId));
+    return user ? user.name : (punch.userName || `User ${punch.userId}`);
+  };
+
+  const resolvedPhoto = (punch) => {
+    let photo = null;
+    if (punch.userPhoto) {
+      photo = punch.userPhoto;
+    } else {
+      const user = users.find(u => String(u.id) === String(punch.userId) || String(u.fingerprint_id) === String(punch.userId));
+      photo = user ? user.photo : null;
+    }
+    if (photo) {
+      if (photo.startsWith('http')) return photo;
+      return `http://${backendHost}:8080${photo}`;
+    }
+    return null;
+  };
+
+  const isFaceScan = (punch) => String(punch.verifyMode) === '15';
 
   const getUpcomingBirthdays = () => {
     const today = new Date();
@@ -290,11 +339,18 @@ const Dashboard = () => {
           <div style={{
             width: '46px', height: '46px', borderRadius: '50%',
             background: 'linear-gradient(135deg, #667eea, #764ba2)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '22px', flexShrink: 0
-          }}>👆</div>
+            display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '22px', flexShrink: 0,
+            overflow: 'hidden'
+          }}>
+            {resolvedPhoto(lastScanToast) ? (
+              <img src={resolvedPhoto(lastScanToast)} alt="Face" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            ) : (
+              isFaceScan(lastScanToast) ? '👤' : '👆'
+            )}
+          </div>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: '10px', color: '#a0a8d0', fontWeight: 700, letterSpacing: '1.5px', textTransform: 'uppercase', marginBottom: '3px' }}>
-              🔴 LIVE FINGERPRINT SCAN
+              🔴 {isFaceScan(lastScanToast) ? 'LIVE FACE SCAN' : 'LIVE FINGERPRINT SCAN'}
             </div>
             <div style={{ fontSize: '17px', fontWeight: 800 }}>{resolvedName(lastScanToast)}</div>
             <div style={{ fontSize: '12px', color: '#8892b0', marginTop: '2px' }}>
@@ -392,8 +448,14 @@ const Dashboard = () => {
                     width: '40px', height: '40px', borderRadius: '50%', flexShrink: 0,
                     background: idx === 0 ? 'linear-gradient(135deg, #667eea, #764ba2)' : '#bdc3c7',
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    color: 'white', fontWeight: 800, fontSize: '14px'
-                  }}>{getInitials(resolvedName(punch))}</div>
+                    color: 'white', fontWeight: 800, fontSize: '14px', overflow: 'hidden'
+                  }}>
+                    {resolvedPhoto(punch) ? (
+                      <img src={resolvedPhoto(punch)} alt="Face" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    ) : (
+                      isFaceScan(punch) ? '👤' : '👆'
+                    )}
+                  </div>
                   <div>
                     <div style={{ fontWeight: 700, fontSize: '14px', marginBottom: '2px' }}>{resolvedName(punch)}</div>
                     <div style={{ fontSize: '11px', color: '#666' }}>ID: {punch.userId}</div>
@@ -435,46 +497,31 @@ const Dashboard = () => {
                     </tr>
                 </thead>
                 <tbody id="attendanceTable">
-                    <tr>
-                        <td><div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}><div className="avatar">A</div> Ahmed Khan</div></td>
-                        <td>Teacher</td>
-                        <td>08:15 AM</td>
-                        <td>--:-- --</td>
-                        <td><span className="status present">Present</span></td>
-                    </tr>
-                    <tr>
-                        <td><div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}><div className="avatar">S</div> Sarah Ali</div></td>
-                        <td>Student</td>
-                        <td>08:45 AM</td>
-                        <td>02:30 PM</td>
-                        <td><span className="status present">Present</span></td>
-                    </tr>
-                    <tr>
-                        <td><div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}><div className="avatar">R</div> Rahul Sharma</div></td>
-                        <td>Student</td>
-                        <td>09:20 AM</td>
-                        <td>--:-- --</td>
-                        <td><span className="status late">Late (20 min)</span></td>
-                    </tr>
-                    <tr>
-                        <td><div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}><div className="avatar" style={{ background: '#e74c3c' }}>M</div> Mrs. Patel</div></td>
-                        <td>Teacher</td>
-                        <td>--:-- --</td>
-                        <td>--:-- --</td>
-                        <td><span className="status absent">Absent</span></td>
-                    </tr>
-                    <tr>
-                        <td><div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}><div className="avatar">J</div> John Doe</div></td>
-                        <td>Staff</td>
-                        <td>08:00 AM</td>
-                        <td>05:00 PM</td>
-                        <td><span className="status present">Present</span></td>
-                    </tr>
+                    {recent.length === 0 ? (
+                      <tr><td colSpan="5" style={{ textAlign: 'center', padding: '40px', color: '#888' }}>No attendance records yet today. Waiting for machine sync...</td></tr>
+                    ) : recent.map((r, i) => (
+                      <tr key={i}>
+                          <td>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                              {r.photo ? (
+                                <img src={r.photo.startsWith('http') ? r.photo : `http://${backendHost}:8080${r.photo}`} alt="Face" style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover' }} />
+                              ) : (
+                                <div className="avatar" style={{ background: '#bdc3c7' }}>{r.name.charAt(0)}</div>
+                              )}
+                              {r.name}
+                            </div>
+                          </td>
+                          <td style={{ textTransform: 'capitalize' }}>{r.role}</td>
+                          <td>{r.inTime}</td>
+                          <td>{r.outTime}</td>
+                          <td><span className="status present">{r.status}</span></td>
+                      </tr>
+                    ))}
                 </tbody>
             </table>
             
             <div style={{ marginTop: '15px', display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#666', alignItems: 'center' }}>
-                <span>Showing 5 of 124 entries</span>
+                <span>Showing {recent.length} entries</span>
                 <div style={{ display: 'flex', gap: '5px' }}>
                     <button className="btn" style={{ background: '#eee' }}>Previous</button>
                     <button className="btn btn-primary">1</button>
@@ -610,6 +657,22 @@ const Dashboard = () => {
 };
 
 const AttendancePage = () => {
+  const [livePunches, setLivePunches] = useState([]);
+  const [userMap, setUserMap] = useState({});
+
+  useEffect(() => {
+    api.get('/users/map').then(res => setUserMap(res.data)).catch(() => {});
+    const handlePunch = (data) => {
+      const entry = { ...data, id: Date.now(), time: new Date().toLocaleTimeString(), date: new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) };
+      setLivePunches(prev => [entry, ...prev]);
+    };
+    socket.on('live_punch', handlePunch);
+    return () => socket.off('live_punch', handlePunch);
+  }, []);
+
+  const getInitials = (name) => name ? name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0,2) : '??';
+  const resolvedName = (punch) => punch.userName || userMap[String(punch.userId)] || `User ${punch.userId}`;
+
   return (
     <div className="dashboard-card">
       <div className="card-header">
@@ -631,6 +694,23 @@ const AttendancePage = () => {
               </tr>
           </thead>
           <tbody>
+              {livePunches.map((punch, idx) => (
+                  <tr key={`live-${idx}`} style={{ background: '#f8f9ff', animation: 'punchSlide 0.5s ease-out' }}>
+                      <td>{punch.date}</td>
+                      <td>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                              <div className="avatar" style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
+                                  {getInitials(resolvedName(punch))}
+                              </div>
+                              {resolvedName(punch)} <span style={{ fontSize: '10px', background: '#667eea', color: 'white', padding: '2px 6px', borderRadius: '10px', marginLeft: '5px' }}>NEW</span>
+                          </div>
+                      </td>
+                      <td>User</td>
+                      <td>{punch.time || punch.timestamp}</td>
+                      <td>--:-- --</td>
+                      <td><span className="status present">Present</span></td>
+                  </tr>
+              ))}
               <tr>
                   <td>20 June 2026</td>
                   <td><div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}><div className="avatar">A</div> Ahmed Khan</div></td>
@@ -837,6 +917,58 @@ const TeachersPage = () => {
     }
   };
 
+  const [inTime, setInTime] = useState('07:30');
+  const [outTime, setOutTime] = useState('09:00'); // 1.5 hours standard shift
+  const [selectedTeacher, setSelectedTeacher] = useState('Ahmed Khan');
+
+  const calculatePayout = () => {
+    if (!inTime || !outTime) return { minutes: 0, hours: 0, remMins: 0, payout: 0, deduction: 0 };
+    
+    // Parse input times
+    const [inH, inM] = inTime.split(':').map(Number);
+    const [outH, outM] = outTime.split(':').map(Number);
+    
+    const actualIn = new Date(); actualIn.setHours(inH, inM, 0);
+    const actualOut = new Date(); actualOut.setHours(outH, outM, 0);
+    
+    // Shift boundaries
+    const shiftStart = new Date(); shiftStart.setHours(7, 30, 0);
+    const graceEnd = new Date(); graceEnd.setHours(7, 35, 0);
+    const shiftEnd = new Date(); shiftEnd.setHours(9, 0, 0);
+    
+    // 1. Calculate Effective In Time
+    let effectiveIn = actualIn;
+    if (actualIn <= graceEnd) {
+        effectiveIn = shiftStart; // Grace period: treat as 07:30
+    }
+    
+    // 2. Calculate Effective Out Time
+    let effectiveOut = actualOut;
+    if (actualOut > shiftEnd) {
+        effectiveOut = shiftEnd; // Don't pay extra for staying past 09:00
+    }
+    
+    // 3. Calculate Valid Minutes
+    let validDiffMs = effectiveOut - effectiveIn;
+    if (validDiffMs < 0) validDiffMs = 0; 
+    
+    const validMinutes = Math.floor(validDiffMs / 60000);
+    
+    // Rate: 700 rupees for 1.5 hours (90 minutes)
+    const ratePerMinute = 700 / 90; 
+    const payout = validMinutes * ratePerMinute;
+    const deduction = 700 - payout;
+    
+    return {
+      minutes: validMinutes,
+      hours: Math.floor(validMinutes / 60),
+      remMins: validMinutes % 60,
+      payout: payout.toFixed(2),
+      deduction: deduction > 0 ? deduction.toFixed(2) : 0
+    };
+  };
+
+  const calc = calculatePayout();
   return (
     <div className="dashboard-card">
       <div className="card-header">
@@ -865,12 +997,12 @@ const TeachersPage = () => {
                     <td>{t.role === 'teacher' ? `${t.subject || 'N/A'} ${t.batch ? `(${t.batch})` : ''}` : (t.profession || 'N/A')}</td>
                     <td>₹ {t.salary ? t.salary.toLocaleString('en-IN') : '0'}</td>
                     <td><code style={{ background: '#f0f2f5', padding: '4px 8px', borderRadius: '4px' }}>{t.fingerprint_id}</code></td>
-                    <td><button className="btn btn-warning" style={{ padding: '4px 10px' }}>💰 Details</button></td>
+                    <td><button className="btn btn-warning" style={{ padding: '4px 10px' }} onClick={() => setSelectedTeacher(t.name)}>💰 Calculate Pay</button></td>
                 </tr>
               ))}
               {teachers.length === 0 && (
                 <tr>
-                  <td colSpan="5" style={{ textAlign: 'center', padding: '20px', color: '#888' }}>No teachers or staff found.</td>
+                  <td colSpan="6" style={{ textAlign: 'center', padding: '20px', color: '#888' }}>No teachers or staff found.</td>
                 </tr>
               )}
           </tbody>
@@ -904,7 +1036,7 @@ const TeachersPage = () => {
               </div>
 
               {role === 'teacher' && (
-                <div style={{ background: '#f8f9fa', padding: '15px', borderRadius: '8px', marginBottom: '20px', border: '1px solid #eee' }}>
+                <div style={{ background: '#f0f4f8', padding: '15px', borderRadius: '8px', marginBottom: '20px', border: '1px solid #d9e2ec' }}>
                   <h4 style={{ margin: '0 0 10px 0', fontSize: '13px', color: '#555', textTransform: 'uppercase' }}>Teacher Details</h4>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                     <input type="text" placeholder="Topic / Subject" value={subject} onChange={e => setSubject(e.target.value)} style={{ padding: '10px', borderRadius: '6px', border: '1px solid #ddd' }} />
@@ -938,6 +1070,37 @@ const TeachersPage = () => {
           </div>
         </div>
       )}
+      
+      <div style={{ marginTop: '20px', padding: '20px', background: '#f8f9fa', borderRadius: '8px', borderLeft: '5px solid #27ae60' }}>
+          <h4 style={{ margin: '0 0 15px 0' }}>Live Per-Minute Pay Calculator: {selectedTeacher}</h4>
+          
+          <div style={{ display: 'flex', gap: '15px', alignItems: 'center', marginBottom: '15px' }}>
+              <div>
+                  <label style={{ display: 'block', fontSize: '12px', color: '#666', marginBottom: '4px' }}>In Time</label>
+                  <input type="time" value={inTime} onChange={(e) => setInTime(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ddd' }} />
+              </div>
+              <div>
+                  <label style={{ display: 'block', fontSize: '12px', color: '#666', marginBottom: '4px' }}>Out Time</label>
+                  <input type="time" value={outTime} onChange={(e) => setOutTime(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ddd' }} />
+              </div>
+              <strong style={{ fontSize: '16px' }}>{calc.hours}h {calc.remMins}m <span style={{ color: '#666', fontSize: '13px', fontWeight: 'normal' }}>({calc.minutes} mins)</span></strong>
+              <div style={{ borderLeft: '1px solid #eee', paddingLeft: '20px' }}>
+                  <div style={{ fontSize: '12px', color: '#888' }}>Base Rate</div>
+                  <strong style={{ fontSize: '14px', color: '#555' }}>₹ 700 / 1.5 hrs</strong>
+                  <div style={{ fontSize: '11px', color: '#888' }}>≈ ₹ 7.78 / minute</div>
+              </div>
+              {calc.deduction > 0 && (
+                  <div style={{ borderLeft: '1px solid #eee', paddingLeft: '20px' }}>
+                      <div style={{ fontSize: '12px', color: '#e74c3c' }}>Late/Early Penalty</div>
+                      <strong style={{ fontSize: '16px', color: '#e74c3c' }}>- ₹ {calc.deduction}</strong>
+                  </div>
+              )}
+              <div style={{ borderLeft: '1px solid #eee', paddingLeft: '20px' }}>
+                  <div style={{ fontSize: '12px', color: '#888' }}>Final Payoff</div>
+                  <strong style={{ fontSize: '20px', color: '#27ae60' }}>₹ {calc.payout}</strong>
+              </div>
+          </div>
+      </div>
     </div>
   );
 };
@@ -946,6 +1109,7 @@ const Simulator = () => {
   const [users, setUsers] = useState([]);
   const [selected, setSelected] = useState(null);
   const [direction, setDirection] = useState('in');
+  const [verifyMode, setVerifyMode] = useState('1'); // 1 = Fingerprint, 15 = Face
   const [time, setTime] = useState(new Date().toLocaleTimeString('en-GB', { hour12: false }));
   const [result, setResult] = useState(null);
   useEffect(() => { api.get('/users').then(res => { setUsers(res.data); if (res.data.length) setSelected(res.data[0]); }); }, []);
@@ -953,8 +1117,13 @@ const Simulator = () => {
     if (!selected) return;
     const now = new Date(); const [h, m, s] = time.split(':').map(Number); now.setHours(h, m, s || 0);
     try {
-      const res = await api.post('/biometric/webhook', { fingerprint_id: selected.fingerprint_id, timestamp: now.toISOString(), direction });
-      setResult({ success: true, msg: `✅ ${selected.name} marked ${direction === 'in' ? 'IN' : 'OUT'} at ${time}`, data: res.data });
+      const res = await api.post('/biometric/webhook', { 
+        fingerprint_id: selected.fingerprint_id, 
+        timestamp: now.toISOString(), 
+        direction,
+        verifyMode
+      });
+      setResult({ success: true, msg: `✅ ${selected.name} marked ${direction === 'in' ? 'IN' : 'OUT'} via ${verifyMode === '15' ? 'Face Scan' : 'Fingerprint'} at ${time}`, data: res.data });
     } catch (err) { setResult({ success: false, msg: `❌ Error: ${err.response?.data?.error || err.message}` }); }
   };
   return (
@@ -963,6 +1132,11 @@ const Simulator = () => {
       <select style={{ width: '100%', padding: '10px', marginBottom: '15px', borderRadius: '6px', border: '1px solid #ddd' }} onChange={(e) => setSelected(users.find(u => u.id === parseInt(e.target.value)))}>
         {users.map(u => <option key={u.id} value={u.id}>{u.name} ({u.role})</option>)}
       </select>
+      <div style={{ marginBottom: '15px' }}>
+        <label style={{ marginRight: '10px', fontWeight: 'bold' }}>Verify Mode: </label>
+        <label style={{ marginRight: '15px' }}><input type="radio" value="1" checked={verifyMode === '1'} onChange={() => setVerifyMode('1')} /> 👆 Fingerprint</label>
+        <label><input type="radio" value="15" checked={verifyMode === '15'} onChange={() => setVerifyMode('15')} /> 👤 Face Scan</label>
+      </div>
       <div style={{ marginBottom: '15px' }}><label>Direction: </label><input type="radio" value="in" checked={direction === 'in'} onChange={() => setDirection('in')} /> IN <input type="radio" value="out" checked={direction === 'out'} onChange={() => setDirection('out')} /> OUT</div>
       <input type="time" step="1" value={time} onChange={(e) => setTime(e.target.value)} style={{ width: '100%', padding: '10px', marginBottom: '15px', borderRadius: '6px', border: '1px solid #ddd' }} />
       <button onClick={simulate} style={{ width: '100%', padding: '12px', borderRadius: '6px', border: 'none', background: '#667eea', color: 'white', fontSize: '16px', cursor: 'pointer' }}>🖐️ Simulate Scan</button>
@@ -1277,8 +1451,86 @@ const DevicesPage = () => {
   const [newName, setNewName] = useState('');
   const [liveScans, setLiveScans] = useState([]);
   const [userMap, setUserMap] = useState({});
+  const [users, setUsers] = useState([]);
   const [toast, setToast] = useState(null);
+  const [syncStatus, setSyncStatus] = useState({});
   const toastTimerRef = React.useRef(null);
+
+  const resolvedName = (scan) => {
+    const user = users.find(u => String(u.id) === String(scan.userId) || String(u.fingerprint_id) === String(scan.userId));
+    return user ? user.name : (scan.userName || `User ${scan.userId}`);
+  };
+
+  const resolvedPhoto = (scan) => {
+    let photo = null;
+    if (scan.userPhoto) {
+      photo = scan.userPhoto;
+    } else {
+      const user = users.find(u => String(u.id) === String(scan.userId) || String(u.fingerprint_id) === String(scan.userId));
+      photo = user ? user.photo : null;
+    }
+    if (photo) {
+      if (photo.startsWith('http')) return photo;
+      return `http://${backendHost}:8080${photo}`;
+    }
+    return null;
+  };
+
+  const isFaceScan = (scan) => String(scan.verifyMode) === '15';
+
+  const handleSyncUsers = (serialNumber) => {
+    setSyncStatus(prev => ({ ...prev, [serialNumber]: 'Syncing...' }));
+    api.post('/devices/sync-users', { serialNumber })
+      .then(res => {
+        setSyncStatus(prev => ({ ...prev, [serialNumber]: 'Command Queued!' }));
+        setTimeout(() => {
+          setSyncStatus(prev => ({ ...prev, [serialNumber]: null }));
+        }, 5000);
+      })
+      .catch(err => {
+        setSyncStatus(prev => ({ ...prev, [serialNumber]: 'Failed' }));
+        setTimeout(() => {
+          setSyncStatus(prev => ({ ...prev, [serialNumber]: null }));
+        }, 5000);
+        console.error(err);
+      });
+  };
+
+  const handleSyncPhotos = (serialNumber) => {
+    setSyncStatus(prev => ({ ...prev, [serialNumber + '_photo']: 'Syncing...' }));
+    api.post('/devices/sync-photos', { serialNumber })
+      .then(res => {
+        setSyncStatus(prev => ({ ...prev, [serialNumber + '_photo']: 'Command Queued!' }));
+        setTimeout(() => {
+          setSyncStatus(prev => ({ ...prev, [serialNumber + '_photo']: null }));
+        }, 5000);
+      })
+      .catch(err => {
+        setSyncStatus(prev => ({ ...prev, [serialNumber + '_photo']: 'Failed' }));
+        setTimeout(() => {
+          setSyncStatus(prev => ({ ...prev, [serialNumber + '_photo']: null }));
+        }, 5000);
+        console.error(err);
+      });
+  };
+
+  const handleRegisterUser = (e) => {
+    e.preventDefault();
+    if (!registeringUserName.trim() || !registeringUserId) return;
+    api.post('/users', {
+      id: registeringUserId,
+      name: registeringUserName,
+      role: registeringUserRole || 'student',
+      fingerprint_id: String(registeringUserId)
+    })
+    .then(() => {
+      // Refresh userMap
+      api.get('/users/map').then(res => setUserMap(res.data)).catch(() => {});
+      setRegisteringUserId(null);
+      setRegisteringUserName('');
+    })
+    .catch(err => console.error(err));
+  };
 
   const fetchDevices = () => {
     setLoading(true);
@@ -1289,6 +1541,12 @@ const DevicesPage = () => {
 
   useEffect(() => {
     fetchDevices();
+
+    // Fetch server LAN IP info
+    api.get('/info').then(res => setServerIp(res.data.ip)).catch(() => {});
+
+    // Load users list
+    api.get('/users').then(res => setUsers(res.data)).catch(() => {});
 
     // Load user ID → name map
     api.get('/users/map').then(res => setUserMap(res.data)).catch(() => {});
@@ -1313,9 +1571,34 @@ const DevicesPage = () => {
       fetchDevices();
     };
 
+    const handleLivePunchPhoto = (data) => {
+      setLiveScans(prev => prev.map(s => {
+        if (String(s.userId) === String(data.userId)) {
+          return { ...s, userPhoto: data.userPhoto };
+        }
+        return s;
+      }));
+
+      setToast(prev => {
+        if (prev && String(prev.userId) === String(data.userId)) {
+          return { ...prev, userPhoto: data.userPhoto };
+        }
+        return prev;
+      });
+
+      setUsers(prev => prev.map(u => {
+        if (String(u.id) === String(data.userId) || String(u.fingerprint_id) === String(data.userId)) {
+          return { ...u, photo: data.userPhoto };
+        }
+        return u;
+      }));
+    };
+
     socket.on('live_punch', handleLivePunch);
+    socket.on('live_punch_photo', handleLivePunchPhoto);
     return () => {
       socket.off('live_punch', handleLivePunch);
+      socket.off('live_punch_photo', handleLivePunchPhoto);
       if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     };
   }, []);
@@ -1335,7 +1618,6 @@ const DevicesPage = () => {
   };
 
   const getInitials = (name) => name ? name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0,2) : '??';
-  const resolvedName = (scan) => scan.userName || userMap[String(scan.userId)] || `User ${scan.userId}`;
 
   const toastStyle = {
     position: 'fixed', top: '24px', right: '24px', zIndex: 9999,
@@ -1356,11 +1638,18 @@ const DevicesPage = () => {
             width: '48px', height: '48px', borderRadius: '50%',
             background: 'linear-gradient(135deg, #667eea, #764ba2)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            color: 'white', fontWeight: '800', fontSize: '16px', flexShrink: 0
-          }}>{getInitials(resolvedName(toast))}</div>
+            color: 'white', fontWeight: '800', fontSize: '16px', flexShrink: 0,
+            overflow: 'hidden'
+          }}>
+            {resolvedPhoto(toast) ? (
+              <img src={resolvedPhoto(toast)} alt="Face" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            ) : (
+              isFaceScan(toast) ? '👤' : '👆'
+            )}
+          </div>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: '11px', color: '#a0a8c0', fontWeight: '600', letterSpacing: '1px', textTransform: 'uppercase', marginBottom: '4px' }}>
-              🔴 Live Scan Detected
+              🔴 {isFaceScan(toast) ? 'Live Face Scan Detected' : 'Live Fingerprint Scan Detected'}
             </div>
             <div style={{ fontSize: '16px', fontWeight: '700', marginBottom: '2px' }}>
               {resolvedName(toast)}
@@ -1450,6 +1739,22 @@ const DevicesPage = () => {
                       style={{ padding: '4px 10px', fontSize: '13px' }}
                       onClick={() => { setEditingDevice(device); setNewName(device.name); }}
                     >✏️ Rename</button>
+                    <button
+                      className="btn btn-primary"
+                      style={{ padding: '4px 10px', fontSize: '13px', background: '#3498db', border: 'none', marginRight: '8px' }}
+                      disabled={syncStatus[device.serialNumber]}
+                      onClick={() => handleSyncUsers(device.serialNumber)}
+                    >
+                      {syncStatus[device.serialNumber] || '📥 Sync Names'}
+                    </button>
+                    <button
+                      className="btn btn-success"
+                      style={{ padding: '4px 10px', fontSize: '13px', background: '#27ae60', border: 'none' }}
+                      disabled={syncStatus[device.serialNumber + '_photo']}
+                      onClick={() => handleSyncPhotos(device.serialNumber)}
+                    >
+                      {syncStatus[device.serialNumber + '_photo'] || '📸 Sync Photos'}
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -1483,12 +1788,12 @@ const DevicesPage = () => {
             background: 'linear-gradient(135deg, #f8f9ff, #f0f4ff)',
             borderRadius: '8px', margin: '10px 0'
           }}>
-            <div style={{ fontSize: '48px', marginBottom: '16px' }}>👆</div>
+            <div style={{ fontSize: '48px', marginBottom: '16px' }}>🧑/👆</div>
             <div style={{ fontSize: '18px', fontWeight: '600', color: '#555', marginBottom: '8px' }}>
-              Waiting for fingerprint scan...
+              Waiting for biometric scan...
             </div>
             <div style={{ fontSize: '14px', color: '#888' }}>
-              Ask someone to scan their fingerprint on the <strong>Bio System (x 2006)</strong> device.<br />
+              Ask someone to scan their face or fingerprint on the <strong>eSSL Device</strong>.<br />
               Their scan will appear here instantly in real time.
             </div>
             <div style={{ marginTop: '20px', display: 'flex', justifyContent: 'center', gap: '8px', alignItems: 'center' }}>
@@ -1530,8 +1835,15 @@ const DevicesPage = () => {
                         ? 'linear-gradient(135deg, #667eea, #764ba2)'
                         : 'linear-gradient(135deg, #bdc3c7, #95a5a6)',
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      color: 'white', fontWeight: '800', fontSize: '15px', flexShrink: 0
-                    }}>{getInitials(resolvedName(scan))}</div>
+                      color: 'white', fontWeight: '800', fontSize: '15px', flexShrink: 0,
+                      overflow: 'hidden'
+                    }}>
+                      {resolvedPhoto(scan) ? (
+                        <img src={resolvedPhoto(scan)} alt="Face" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      ) : (
+                        isFaceScan(scan) ? '👤' : '👆'
+                      )}
+                    </div>
                     <div style={{ flex: 1 }}>
                       <div style={{ fontWeight: '700', fontSize: '15px', marginBottom: '2px' }}>
                         {resolvedName(scan)}
