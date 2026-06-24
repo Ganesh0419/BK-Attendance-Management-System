@@ -79,7 +79,14 @@ const userSchema = new mongoose.Schema({
   installment: { type: String },
   receiptNo: { type: String },
   amountReceivedWords: { type: String },
-  dueFees: { type: Number }
+  dueFees: { type: Number },
+  salary: { type: Number },
+  profession: { type: String },
+  photoUrl: { type: String, required: false },
+  photo: { type: String },
+  experience: { type: String },
+  subject: { type: String },
+  timing: { type: String }
 });
 const User = mongoose.model('User', userSchema);
 
