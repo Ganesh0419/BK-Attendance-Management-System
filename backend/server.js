@@ -163,13 +163,7 @@ async function seedUsers() {
 <<<<<<< Updated upstream
     const count = await User.countDocuments();
     if (count === 0) {
-      await User.insertMany([
-        { id: 1, name: 'Admin User', role: 'admin', fingerprint_id: '111' },
-        { id: 2, name: 'John Doe', role: 'student', fingerprint_id: '222' },
-        { id: 3, name: 'Ahmed Khan', role: 'teacher', fingerprint_id: '333' },
-        { id: 4, name: 'Sarah Ali', role: 'student', fingerprint_id: '444' },
-        { id: 5, name: 'Mrs. Patel', role: 'teacher', fingerprint_id: '555' }
-      ]);
+      console.log('Skipping fake user seeding. Clean database ready.');
       console.log('🌱 Seeded default users to MongoDB');
 =======
     // Unset the old photoUrl field from all users in MongoDB
@@ -439,18 +433,7 @@ app.post(['/iclock/cdata', '/iclock/cdata.aspx'], async (req, res) => {
         let userName = `User ${userId}`;
 <<<<<<< Updated upstream
         let photoUrl = '';
-        const fallbackNames = {
-          '1': 'Admin User',
-          '01': 'Admin User',
-          '2': 'John Doe',
-          '02': 'John Doe',
-          '3': 'Ahmed Khan',
-          '03': 'Ahmed Khan',
-          '4': 'Sarah Ali',
-          '04': 'Sarah Ali',
-          '5': 'Mrs. Patel',
-          '05': 'Mrs. Patel'
-        };
+        const fallbackNames = {};
 =======
         let userPhoto = null;
 >>>>>>> Stashed changes

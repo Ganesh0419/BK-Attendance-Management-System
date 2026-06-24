@@ -3,12 +3,8 @@ import { BrowserRouter as Router, Routes, Route, Link, Navigate, useLocation } f
 import { io } from 'socket.io-client';
 import api from './api';
 
-<<<<<<< Updated upstream
-const socket = io('http://localhost:8080');
-=======
-const backendHost = '192.168.0.104';
+const backendHost = window.location.hostname;
 const socket = io(`http://${backendHost}:8080`);
->>>>>>> Stashed changes
 const AuthContext = React.createContext(null);
 
 // --- LOGIN PAGE ---
@@ -213,7 +209,7 @@ const Dashboard = () => {
   const [stats, setStats] = useState(null);
   const [recent, setRecent] = useState([]);
   const [livePunches, setLivePunches] = useState([]);
-  const [userMap, setUserMap] = useState({});
+  const [users, setUsers] = useState([]);
   const [lastScanToast, setLastScanToast] = useState(null);
   const toastRef = React.useRef(null);
 
@@ -224,7 +220,7 @@ const Dashboard = () => {
     });
 
     // Load user ID → name map
-    api.get('/users/map').then(res => setUserMap(res.data)).catch(() => {});
+    api.get('/users').then(res => setUsers(res.data)).catch(() => {});
 
     const handlePunch = (data) => {
       const entry = { ...data, id: Date.now(), time: new Date().toLocaleTimeString() };
@@ -249,12 +245,7 @@ const Dashboard = () => {
         return prev;
       });
 
-      setPunches(prev => prev.map(p => {
-        if (String(p.userId) === String(data.userId)) {
-          return { ...p, userPhoto: data.userPhoto };
-        }
-        return p;
-      }));
+      
 
       setUsers(prev => prev.map(u => {
         if (String(u.id) === String(data.userId) || String(u.fingerprint_id) === String(data.userId)) {
@@ -315,14 +306,6 @@ const Dashboard = () => {
           <div style={{
             width: '46px', height: '46px', borderRadius: '50%',
             background: 'linear-gradient(135deg, #667eea, #764ba2)',
-<<<<<<< Updated upstream
-            display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '22px', flexShrink: 0, overflow: 'hidden'
-          }}>
-            {lastScanToast.photoUrl ? (
-              <img src={lastScanToast.photoUrl} alt="User Face" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-            ) : (
-              lastScanToast.verifyMode === '15' ? '🧑' : '👆'
-=======
             display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '22px', flexShrink: 0,
             overflow: 'hidden'
           }}>
@@ -330,16 +313,11 @@ const Dashboard = () => {
               <img src={resolvedPhoto(lastScanToast)} alt="Face" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
             ) : (
               isFaceScan(lastScanToast) ? '👤' : '👆'
->>>>>>> Stashed changes
             )}
           </div>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: '10px', color: '#a0a8d0', fontWeight: 700, letterSpacing: '1.5px', textTransform: 'uppercase', marginBottom: '3px' }}>
-<<<<<<< Updated upstream
-              🔴 LIVE {lastScanToast.verifyMode === '15' ? 'FACE' : 'FINGERPRINT'} SCAN
-=======
               🔴 {isFaceScan(lastScanToast) ? 'LIVE FACE SCAN' : 'LIVE FINGERPRINT SCAN'}
->>>>>>> Stashed changes
             </div>
             <div style={{ fontSize: '17px', fontWeight: 800 }}>{resolvedName(lastScanToast)}</div>
             <div style={{ fontSize: '12px', color: '#8892b0', marginTop: '2px' }}>
@@ -486,46 +464,31 @@ const Dashboard = () => {
                     </tr>
                 </thead>
                 <tbody id="attendanceTable">
-                    <tr>
-                        <td><div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}><div className="avatar">A</div> Ahmed Khan</div></td>
-                        <td>Teacher</td>
-                        <td>08:15 AM</td>
-                        <td>--:-- --</td>
-                        <td><span className="status present">Present</span></td>
-                    </tr>
-                    <tr>
-                        <td><div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}><div className="avatar">S</div> Sarah Ali</div></td>
-                        <td>Student</td>
-                        <td>08:45 AM</td>
-                        <td>02:30 PM</td>
-                        <td><span className="status present">Present</span></td>
-                    </tr>
-                    <tr>
-                        <td><div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}><div className="avatar">R</div> Rahul Sharma</div></td>
-                        <td>Student</td>
-                        <td>09:20 AM</td>
-                        <td>--:-- --</td>
-                        <td><span className="status late">Late (20 min)</span></td>
-                    </tr>
-                    <tr>
-                        <td><div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}><div className="avatar" style={{ background: '#e74c3c' }}>M</div> Mrs. Patel</div></td>
-                        <td>Teacher</td>
-                        <td>--:-- --</td>
-                        <td>--:-- --</td>
-                        <td><span className="status absent">Absent</span></td>
-                    </tr>
-                    <tr>
-                        <td><div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}><div className="avatar">J</div> John Doe</div></td>
-                        <td>Staff</td>
-                        <td>08:00 AM</td>
-                        <td>05:00 PM</td>
-                        <td><span className="status present">Present</span></td>
-                    </tr>
+                    {recent.length === 0 ? (
+                      <tr><td colSpan="5" style={{ textAlign: 'center', padding: '40px', color: '#888' }}>No attendance records yet today. Waiting for machine sync...</td></tr>
+                    ) : recent.map((r, i) => (
+                      <tr key={i}>
+                          <td>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                              {r.photo ? (
+                                <img src={r.photo.startsWith('http') ? r.photo : `http://${backendHost}:8080${r.photo}`} alt="Face" style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover' }} />
+                              ) : (
+                                <div className="avatar" style={{ background: '#bdc3c7' }}>{r.name.charAt(0)}</div>
+                              )}
+                              {r.name}
+                            </div>
+                          </td>
+                          <td style={{ textTransform: 'capitalize' }}>{r.role}</td>
+                          <td>{r.inTime}</td>
+                          <td>{r.outTime}</td>
+                          <td><span className="status present">{r.status}</span></td>
+                      </tr>
+                    ))}
                 </tbody>
             </table>
             
             <div style={{ marginTop: '15px', display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#666', alignItems: 'center' }}>
-                <span>Showing 5 of 124 entries</span>
+                <span>Showing {recent.length} entries</span>
                 <div style={{ display: 'flex', gap: '5px' }}>
                     <button className="btn" style={{ background: '#eee' }}>Previous</button>
                     <button className="btn btn-primary">1</button>
@@ -991,8 +954,7 @@ const TeachersPage = () => {
                   <label style={{ display: 'block', fontSize: '12px', color: '#666', marginBottom: '4px' }}>Out Time</label>
                   <input type="time" value={outTime} onChange={(e) => setOutTime(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ddd' }} />
               </div>
-                  <strong style={{ fontSize: '16px' }}>{calc.hours}h {calc.remMins}m <span style={{ color: '#666', fontSize: '13px', fontWeight: 'normal' }}>({calc.minutes} mins)</span></strong>
-              </div>
+              <strong style={{ fontSize: '16px' }}>{calc.hours}h {calc.remMins}m <span style={{ color: '#666', fontSize: '13px', fontWeight: 'normal' }}>({calc.minutes} mins)</span></strong>
               <div style={{ borderLeft: '1px solid #eee', paddingLeft: '20px' }}>
                   <div style={{ fontSize: '12px', color: '#888' }}>Base Rate</div>
                   <strong style={{ fontSize: '14px', color: '#555' }}>₹ 700 / 1.5 hrs</strong>
@@ -1139,10 +1101,9 @@ const DevicesPage = () => {
   const [userMap, setUserMap] = useState({});
   const [users, setUsers] = useState([]);
   const [toast, setToast] = useState(null);
+  const [syncStatus, setSyncStatus] = useState({});
   const toastTimerRef = React.useRef(null);
 
-<<<<<<< Updated upstream
-=======
   const resolvedName = (scan) => {
     const user = users.find(u => String(u.id) === String(scan.userId) || String(u.fingerprint_id) === String(scan.userId));
     return user ? user.name : (scan.userName || `User ${scan.userId}`);
@@ -1219,7 +1180,6 @@ const DevicesPage = () => {
     .catch(err => console.error(err));
   };
 
->>>>>>> Stashed changes
   const fetchDevices = () => {
     setLoading(true);
     api.get('/devices')
@@ -1230,15 +1190,12 @@ const DevicesPage = () => {
   useEffect(() => {
     fetchDevices();
 
-<<<<<<< Updated upstream
-=======
     // Fetch server LAN IP info
     api.get('/info').then(res => setServerIp(res.data.ip)).catch(() => {});
 
     // Load users list
     api.get('/users').then(res => setUsers(res.data)).catch(() => {});
 
->>>>>>> Stashed changes
     // Load user ID → name map
     api.get('/users/map').then(res => setUserMap(res.data)).catch(() => {});
 
@@ -1329,14 +1286,6 @@ const DevicesPage = () => {
             width: '48px', height: '48px', borderRadius: '50%',
             background: 'linear-gradient(135deg, #667eea, #764ba2)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-<<<<<<< Updated upstream
-            color: 'white', fontWeight: '800', fontSize: '16px', flexShrink: 0, overflow: 'hidden'
-          }}>
-            {toast.photoUrl ? (
-              <img src={toast.photoUrl} alt="Face" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-            ) : (
-              getInitials(resolvedName(toast))
-=======
             color: 'white', fontWeight: '800', fontSize: '16px', flexShrink: 0,
             overflow: 'hidden'
           }}>
@@ -1344,16 +1293,11 @@ const DevicesPage = () => {
               <img src={resolvedPhoto(toast)} alt="Face" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
             ) : (
               isFaceScan(toast) ? '👤' : '👆'
->>>>>>> Stashed changes
             )}
           </div>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: '11px', color: '#a0a8c0', fontWeight: '600', letterSpacing: '1px', textTransform: 'uppercase', marginBottom: '4px' }}>
-<<<<<<< Updated upstream
-              🔴 LIVE {toast.verifyMode === '15' ? 'FACE' : 'FINGERPRINT'} SCAN
-=======
               🔴 {isFaceScan(toast) ? 'Live Face Scan Detected' : 'Live Fingerprint Scan Detected'}
->>>>>>> Stashed changes
             </div>
             <div style={{ fontSize: '16px', fontWeight: '700', marginBottom: '2px' }}>
               {resolvedName(toast)}
@@ -1443,8 +1387,6 @@ const DevicesPage = () => {
                       style={{ padding: '4px 10px', fontSize: '13px' }}
                       onClick={() => { setEditingDevice(device); setNewName(device.name); }}
                     >✏️ Rename</button>
-<<<<<<< Updated upstream
-=======
                     <button
                       className="btn btn-primary"
                       style={{ padding: '4px 10px', fontSize: '13px', background: '#3498db', border: 'none', marginRight: '8px' }}
@@ -1461,7 +1403,6 @@ const DevicesPage = () => {
                     >
                       {syncStatus[device.serialNumber + '_photo'] || '📸 Sync Photos'}
                     </button>
->>>>>>> Stashed changes
                   </td>
                 </tr>
               ))}
