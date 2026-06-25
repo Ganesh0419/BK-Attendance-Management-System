@@ -205,7 +205,6 @@ const Layout = ({ children, logout, user }) => (
 // --- PAGES ---
 const Dashboard = () => {
   const [stats, setStats] = useState(null);
-  const [users, setUsers] = useState([]);
   const [recent, setRecent] = useState([]);
   const [livePunches, setLivePunches] = useState([]);
   const [users, setUsers] = useState([]);
@@ -213,7 +212,6 @@ const Dashboard = () => {
   const toastRef = React.useRef(null);
 
   useEffect(() => {
-    api.get('/users').then(res => setUsers(res.data)).catch(() => {});
     api.get('/admin/dashboard').then(res => {
       setStats(res.data.stats);
       setRecent(res.data.recentAttendance);
