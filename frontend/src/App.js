@@ -4,7 +4,7 @@ import ReceiptPrintView from './ReceiptPrintView';
 import { io } from 'socket.io-client';
 import api from './api';
 
-const backendHost = window.location.hostname;
+const backendHost = '192.168.0.107';
 const socket = io(`http://${backendHost}:8080`);
 const AuthContext = React.createContext(null);
 
@@ -421,7 +421,7 @@ const Dashboard = () => {
             </div>
             <div style={{ marginTop: '16px', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px' }}>
               <span className="live-dot-green"></span>
-              <span style={{ fontSize: '13px', color: '#27ae60', fontWeight: 600 }}>Socket connected → 192.168.0.106:8080</span>
+              <span style={{ fontSize: '13px', color: '#27ae60', fontWeight: 600 }}>Socket connected → 192.168.0.107:8080</span>
             </div>
           </div>
         ) : (
