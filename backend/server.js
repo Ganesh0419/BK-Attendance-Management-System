@@ -923,6 +923,6 @@ app.post('/api/receipts/generate', async (req, res) => {
 // Start unified server on ALL interfaces so LAN devices (eSSL) can reach it
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Unified Backend & ADMS Server is running on http://0.0.0.0:${PORT}`);
-  console.log(`📡 LAN accessible at http://192.168.0.106:${PORT}`);
-  console.log(`🔬 ADMS endpoint: POST http://192.168.0.106:${PORT}/iclock/cdata`);
+  console.log(`📡 LAN accessible at http://192.168.0.107:${PORT}`);
+  console.log(`🔬 ADMS endpoint: POST http://192.168.0.107:${PORT}/iclock/cdata`);
 });
