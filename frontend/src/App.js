@@ -5,7 +5,7 @@ import { io } from 'socket.io-client';
 import api from './api';
 import logo from './logo.jpeg';
 
-const backendHost = '192.168.0.107';
+const backendHost = '192.168.0.108';
 const socket = io(`http://${backendHost}:8080`);
 const AuthContext = React.createContext(null);
 
@@ -262,7 +262,8 @@ const Dashboard = () => {
     const getInitials = (name) => name ? name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2) : '??';
 
     const resolvedName = (punch) => {
-        const user = users.find(u => String(u.id) === String(punch.userId) || String(u.fingerprint_id) === String(punch.userId));
+        let user = users.find(u => String(u.fingerprint_id) === String(punch.userId));
+        if (!user) user = users.find(u => String(u.id) === String(punch.userId));
         return user ? user.name : (punch.userName || `User ${punch.userId}`);
     };
 
@@ -271,7 +272,8 @@ const Dashboard = () => {
         if (punch.userPhoto) {
             photo = punch.userPhoto;
         } else {
-            const user = users.find(u => String(u.id) === String(punch.userId) || String(u.fingerprint_id) === String(punch.userId));
+            let user = users.find(u => String(u.fingerprint_id) === String(punch.userId));
+            if (!user) user = users.find(u => String(u.id) === String(punch.userId));
             photo = user ? user.photo : null;
         }
         if (photo) {
@@ -414,7 +416,7 @@ const Dashboard = () => {
                         </div>
                         <div style={{ marginTop: '16px', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px' }}>
                             <span className="live-dot-green"></span>
-    <span style={{ fontSize: '13px', color: '#27ae60', fontWeight: 600 }}>Socket connected → 192.168.0.107:8080</span>
+    <span style={{ fontSize: '13px', color: '#27ae60', fontWeight: 600 }}>Socket connected → {backendHost}:8080</span>
             </div >
           </div >
         ) : (
