@@ -4,8 +4,9 @@ import ReceiptPrintView from './ReceiptPrintView';
 import { io } from 'socket.io-client';
 import api from './api';
 import logo from './logo.jpeg';
+import * as XLSX from 'xlsx';
 
-const backendHost = '192.168.0.107';
+const backendHost = '192.168.0.108';
 const socket = io(`http://${backendHost}:8080`);
 const AuthContext = React.createContext(null);
 
@@ -84,7 +85,7 @@ const Sidebar = ({ logout, user }) => {
         {admOpen && (
             <ul style={{ listStyle: 'none', padding: 0, margin: 0, background: '#1a252f' }}>
                 <li><Link to="/enroll-student" style={{ display: 'block', padding: '12px 20px 12px 40px', color: '#ecf0f1', textDecoration: 'none', fontSize: '14px', borderBottom: '1px solid #2c3e50', fontWeight: '400' }}>○ Enroll Student</Link></li>
-                <li><Link to="/admissions" style={{ display: 'block', padding: '12px 20px 12px 40px', color: '#ecf0f1', textDecoration: 'none', fontSize: '14px', borderBottom: '1px solid #2c3e50', fontWeight: '400' }}>○ Bulk Upload</Link></li>
+                <li><Link to="/bulk-upload" style={{ display: 'block', padding: '12px 20px 12px 40px', color: '#ecf0f1', textDecoration: 'none', fontSize: '14px', borderBottom: '1px solid #2c3e50', fontWeight: '400' }}>○ Bulk Upload</Link></li>
                 <li><Link to="/admissions" style={{ display: 'block', padding: '12px 20px 12px 40px', color: '#ecf0f1', textDecoration: 'none', fontSize: '14px', borderBottom: '1px solid #2c3e50', fontWeight: '400' }}>○ Student List</Link></li>
                 <li><Link to="/birthdays" style={{ display: 'block', padding: '12px 20px 12px 40px', color: '#ecf0f1', textDecoration: 'none', fontSize: '14px', borderBottom: '1px solid #2c3e50', fontWeight: '400' }}>○ Birthday Reminders</Link></li>
             </ul>
@@ -262,7 +263,8 @@ const Dashboard = () => {
     const getInitials = (name) => name ? name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2) : '??';
 
     const resolvedName = (punch) => {
-        const user = users.find(u => String(u.id) === String(punch.userId) || String(u.fingerprint_id) === String(punch.userId));
+        let user = users.find(u => String(u.fingerprint_id) === String(punch.userId));
+        if (!user) user = users.find(u => String(u.id) === String(punch.userId));
         return user ? user.name : (punch.userName || `User ${punch.userId}`);
     };
 
@@ -271,7 +273,8 @@ const Dashboard = () => {
         if (punch.userPhoto) {
             photo = punch.userPhoto;
         } else {
-            const user = users.find(u => String(u.id) === String(punch.userId) || String(u.fingerprint_id) === String(punch.userId));
+            let user = users.find(u => String(u.fingerprint_id) === String(punch.userId));
+            if (!user) user = users.find(u => String(u.id) === String(punch.userId));
             photo = user ? user.photo : null;
         }
         if (photo) {
@@ -414,7 +417,7 @@ const Dashboard = () => {
                         </div>
                         <div style={{ marginTop: '16px', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px' }}>
                             <span className="live-dot-green"></span>
-    <span style={{ fontSize: '13px', color: '#27ae60', fontWeight: 600 }}>Socket connected → 192.168.0.107:8080</span>
+    <span style={{ fontSize: '13px', color: '#27ae60', fontWeight: 600 }}>Socket connected → {backendHost}:8080</span>
             </div >
           </div >
         ) : (
@@ -746,6 +749,87 @@ const NewEnquiryPage = () => {
     return (
         <div style={{ height: 'calc(100vh - 100px)', width: '100%', padding: '0px' }}>
             <iframe src="/enrollment.html" style={{ width: '100%', height: '100%', border: 'none', borderRadius: '12px' }} title="New Enquiry"></iframe>
+        </div>
+    );
+};
+
+const BulkUploadPage = () => {
+    const [bulkFile, setBulkFile] = useState(null);
+    const [successMessage, setSuccessMessage] = useState("");
+
+    const handleFileChange = (e) => {
+        if (e.target.files.length > 0) setBulkFile(e.target.files[0]);
+    };
+
+    const handleLoadData = () => {
+        if (!bulkFile) return alert("Please choose an Excel file first.");
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+            try {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, { type: 'array' });
+                const sheetName = workbook.SheetNames[0];
+                const worksheet = workbook.Sheets[sheetName];
+                const json = XLSX.utils.sheet_to_json(worksheet);
+                
+                if (json.length === 0) return alert("Excel file is empty");
+                
+                let successCount = 0;
+                for (let row of json) {
+                    try {
+                        await api.post('/users/enroll', {
+                            name: row.Name || row.name || 'Unknown',
+                            email: row.Email || row.email || '',
+                            fingerprint_id: row.BiometricId || row.RegisterNo || row['Register No'] || String(Date.now()).slice(-6),
+                            role: 'student',
+                            studentContact: row.Phone || row.phone || row['Mobile'] || '',
+                            course: row.Course || row.course || row['Class'] || ''
+                        });
+                        successCount++;
+                    } catch (err) {
+                        console.error("Failed to enroll row", row, err);
+                    }
+                }
+                setSuccessMessage(`Successfully enrolled ${successCount} out of ${json.length} students.`);
+                alert(`Successfully enrolled ${successCount} students.`);
+            } catch (error) {
+                console.error(error);
+                alert("Error parsing Excel file. Ensure it is a valid .xlsx file.");
+            }
+        };
+        reader.readAsArrayBuffer(bulkFile);
+    };
+
+    return (
+        <div className="dashboard-card">
+            <div className="card-header">
+                <h2>📁 Student Bulk Upload</h2>
+            </div>
+            <div style={{ marginBottom: '30px', background: '#fff', padding: '20px', borderRadius: '8px', border: '1px solid #e0e0e0' }}>
+                <h3 style={{ fontSize: '18px', color: '#3b3b58', marginBottom: '15px', marginTop: 0 }}>Upload Excel File</h3>
+                {successMessage && <div style={{ padding: '10px', background: '#d4edda', color: '#155724', marginBottom: '15px', borderRadius: '4px' }}>{successMessage}</div>}
+                <div style={{ display: 'flex', gap: '15px', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <div style={{ position: 'relative', flex: '1', minWidth: '300px', maxWidth: '400px' }}>
+                        <label style={{ position: 'absolute', top: '-8px', left: '10px', background: 'white', padding: '0 5px', fontSize: '12px', color: '#888' }}>Excel File</label>
+                        <div style={{ display: 'flex', border: '1px solid #e0e0e0', borderRadius: '6px', overflow: 'hidden', background: '#fff' }}>
+                            <input type="file" accept=".xlsx, .xls, .csv" onChange={handleFileChange} style={{ flex: 1, padding: '10px', outline: 'none', border: 'none', background: 'transparent' }} />
+                            <a href="#" onClick={(e) => {
+                                e.preventDefault();
+                                const ws = XLSX.utils.json_to_sheet([{ Name: 'John Doe', Email: 'john@example.com', RegisterNo: '1001', Phone: '9876543210', Course: 'Math' }]);
+                                const wb = XLSX.utils.book_new();
+                                XLSX.utils.book_append_sheet(wb, ws, "Template");
+                                XLSX.writeFile(wb, "Student_Bulk_Template.xlsx");
+                            }} style={{ padding: '10px 15px', borderLeft: '1px solid #e0e0e0', color: '#8b5cf6', textDecoration: 'none', background: '#fcfcfc', display: 'flex', alignItems: 'center', justifyContent: 'center' }} title="Download Template">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                            </a>
+                        </div>
+                    </div>
+                    <button onClick={handleLoadData} style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#fff', border: '1px solid #a855f7', color: '#a855f7', padding: '10px 20px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', transition: 'all 0.2s ease' }} onMouseOver={(e) => { e.currentTarget.style.background = '#f3e8ff'; }} onMouseOut={(e) => { e.currentTarget.style.background = '#fff'; }}>
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                        Load Data
+                    </button>
+                </div>
+            </div>
         </div>
     );
 };
@@ -1137,7 +1221,7 @@ const Simulator = () => {
 const EnrollStudentPage = () => {
     const [step, setStep] = useState(1);
     const [formData, setFormData] = useState({
-        name: '', aadhar: '', enquiryDate: new Date().toISOString().split('T')[0], gender: 'Male', dob: '', email: '', fingerprint_id: '', address: '',
+        name: '', fatherName: '', motherName: '', aadhar: '', enquiryDate: new Date().toISOString().split('T')[0], gender: 'Male', dob: '', email: '', fingerprint_id: '', address: '',
         fatherContact: '', motherContact: '', studentContact: '',
         branch: '', course: '', batchTiming: '',
         previousSchool: '', tenthPercent: '', twelfthPercent: '',
@@ -1179,7 +1263,71 @@ const EnrollStudentPage = () => {
     const dueFees = Math.max(0, netFee - receivedNum);
     const amountWords = receivedNum ? numberToWords(receivedNum) : 'Zero';
 
+    const step1Keys = ['name', 'fatherName', 'motherName', 'aadhar', 'enquiryDate', 'gender', 'dob', 'email', 'fingerprint_id', 'address', 'fatherContact', 'motherContact', 'studentContact'];
+    const step2Keys = ['branch', 'course', 'batchTiming'];
+    const step3Keys = ['previousSchool', 'tenthPercent', 'twelfthPercent'];
+    const step4Keys = ['bankName', 'accountNumber', 'ifscCode', 'accountHolder', 'amountReceived', 'paymentMode', 'installment', 'totalFee'];
+    
+    const friendlyNames = {
+        name: "Student Name", fatherName: "Father's Name", motherName: "Mother's Name", aadhar: "Aadhar Number", enquiryDate: "Enquiry Date", gender: "Gender", dob: "Date of Birth", email: "Email", fingerprint_id: "Biometric Registration No.", address: "Address", fatherContact: "Father Contact", motherContact: "Mother Contact", studentContact: "Student Contact",
+        branch: "Branch", course: "Course", batchTiming: "Batch Timing", previousSchool: "Previous School", tenthPercent: "10th Percentage", twelfthPercent: "12th Percentage",
+        bankName: "Bank Name", accountNumber: "Account Number", ifscCode: "IFSC Code", accountHolder: "Account Holder", amountReceived: "Amount Received", paymentMode: "Payment Mode", installment: "Installment", totalFee: "Total Fee"
+    };
+
+    const validateStep = (stepToValidate) => {
+        let keysToCheck = [];
+        if (stepToValidate === 1) keysToCheck = step1Keys;
+        else if (stepToValidate === 2) keysToCheck = step2Keys;
+        else if (stepToValidate === 3) keysToCheck = step3Keys;
+        else if (stepToValidate === 4) keysToCheck = step4Keys;
+
+        for (const key of keysToCheck) {
+            if (typeof formData[key] === 'string' && formData[key].trim() === '') {
+                alert(`Please fill out all fields in this step before proceeding. Missing: ${friendlyNames[key] || key}`);
+                return false;
+            }
+        }
+
+        if (stepToValidate === 1) {
+            if (formData.studentContact === formData.fatherContact) {
+                alert("Student Contact Number and Father's Contact Number must be different.");
+                return false;
+            }
+            if (formData.studentContact === formData.motherContact) {
+                alert("Student Contact Number and Mother's Contact Number must be different.");
+                return false;
+            }
+        }
+
+        return true;
+    };
+
+    const handleNextStep = () => {
+        if (!validateStep(step)) return;
+        setStep(step + 1);
+    };
+
+    const handleStepClick = (targetStep) => {
+        if (targetStep > step) {
+            for (let i = step; i < targetStep; i++) {
+                if (!validateStep(i)) {
+                    setStep(i);
+                    return;
+                }
+            }
+        }
+        setStep(targetStep);
+    };
+
     const handleSubmit = async () => {
+        // Final sanity check
+        for (let i = 1; i <= 4; i++) {
+            if (!validateStep(i)) {
+                setStep(i);
+                return;
+            }
+        }
+
         setLoading(true);
         try {
             let receiptNo = null;
@@ -1232,7 +1380,7 @@ const EnrollStudentPage = () => {
                     { id: 3, title: 'Academic Details', desc: 'Setup Academic Details' },
                     { id: 4, title: 'Banking Details', desc: 'Setup Banking Details' }
                 ].map((s) => (
-                    <div key={s.id} onClick={() => setStep(s.id)} style={{ textAlign: 'center', position: 'relative', zIndex: 2, background: 'white', padding: '0 10px', flex: 1, cursor: 'pointer' }}>
+                    <div key={s.id} onClick={() => handleStepClick(s.id)} style={{ textAlign: 'center', position: 'relative', zIndex: 2, background: 'white', padding: '0 10px', flex: 1, cursor: 'pointer' }}>
                         <div style={{
                             width: step === s.id ? '20px' : '24px',
                             height: step === s.id ? '20px' : '24px',
@@ -1258,7 +1406,13 @@ const EnrollStudentPage = () => {
                             <input type="text" name="name" value={formData.name} onChange={handleInput} placeholder="Student Name*" style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none', color: '#555' }} />
                         </div>
                         <div>
-                            <input type="text" name="aadhar" value={formData.aadhar} onInput={(e) => { e.target.value = e.target.value.replace(/\D/g, '').slice(0, 12); handleInput(e); }} placeholder="Aadhar Number" style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none' }} />
+                            <input type="text" name="fatherName" value={formData.fatherName} onChange={handleInput} placeholder="Father's Name*" style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none', color: '#555' }} />
+                        </div>
+                        <div>
+                            <input type="text" name="motherName" value={formData.motherName} onChange={handleInput} placeholder="Mother's Name*" style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none', color: '#555' }} />
+                        </div>
+                        <div>
+                            <input type="text" name="aadhar" value={formData.aadhar} onInput={(e) => { e.target.value = e.target.value.replace(/\D/g, '').slice(0, 12); handleInput(e); }} placeholder="Aadhar Number*" style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none' }} />
                         </div>
                         <div style={{ position: 'relative' }}>
                             <label style={{ position: 'absolute', top: '-8px', left: '10px', background: 'white', padding: '0 5px', fontSize: '12px', color: '#666' }}>Enquiry Date*</label>
@@ -1266,7 +1420,7 @@ const EnrollStudentPage = () => {
                         </div>
 
                         <div style={{ position: 'relative' }}>
-                            <label style={{ position: 'absolute', top: '-8px', left: '10px', background: 'white', padding: '0 5px', fontSize: '12px', color: '#666' }}>Gender</label>
+                            <label style={{ position: 'absolute', top: '-8px', left: '10px', background: 'white', padding: '0 5px', fontSize: '12px', color: '#666' }}>Gender*</label>
                             <select name="gender" value={formData.gender} onChange={handleInput} style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none', color: '#555', appearance: 'none', background: 'url("data:image/svg+xml;utf8,<svg fill=%27black%27 height=%2724%27 viewBox=%270 0 24 24%27 width=%2724%27 xmlns=%27http://www.w3.org/2000/svg%27><path d=%27M7 10l5 5 5-5z%27/><path d=%27M0 0h24v24H0z%27 fill=%27none%27/></svg>") no-repeat right 10px center' }}>
                                 <option>Male</option>
                                 <option>Female</option>
@@ -1275,27 +1429,27 @@ const EnrollStudentPage = () => {
                             </select>
                         </div>
                         <div style={{ position: 'relative' }}>
-                            <label style={{ position: 'absolute', top: '-8px', left: '10px', background: 'white', padding: '0 5px', fontSize: '12px', color: '#666' }}>Date of Birth</label>
+                            <label style={{ position: 'absolute', top: '-8px', left: '10px', background: 'white', padding: '0 5px', fontSize: '12px', color: '#666' }}>Date of Birth*</label>
                             <input type="date" name="dob" value={formData.dob} onChange={handleInput} style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none', color: '#999' }} />
                         </div>
                         <div>
-                            <input type="email" name="email" value={formData.email} onChange={handleInput} placeholder="Email Id" style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none' }} />
+                            <input type="email" name="email" value={formData.email} onChange={handleInput} placeholder="Email Id*" style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none' }} />
                         </div>
                         <div>
-                            <input type="text" name="fingerprint_id" value={formData.fingerprint_id} onChange={handleInput} placeholder="Biometric Registration No." style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none' }} />
+                            <input type="text" name="fingerprint_id" value={formData.fingerprint_id} onChange={handleInput} placeholder="Biometric Registration No.*" style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none' }} />
                         </div>
 
                         <div>
-                            <input type="text" name="fatherContact" value={formData.fatherContact} onInput={(e) => { e.target.value = e.target.value.replace(/\D/g, '').slice(0, 10); handleInput(e); }} placeholder="Father Contact Number" style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none' }} />
+                            <input type="text" name="fatherContact" value={formData.fatherContact} onInput={(e) => { e.target.value = e.target.value.replace(/\D/g, '').slice(0, 10); handleInput(e); }} placeholder="Father Contact Number*" style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none' }} />
                         </div>
                         <div>
-                            <input type="text" name="motherContact" value={formData.motherContact} onInput={(e) => { e.target.value = e.target.value.replace(/\D/g, '').slice(0, 10); handleInput(e); }} placeholder="Mother Contact Number" style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none' }} />
+                            <input type="text" name="motherContact" value={formData.motherContact} onInput={(e) => { e.target.value = e.target.value.replace(/\D/g, '').slice(0, 10); handleInput(e); }} placeholder="Mother Contact Number*" style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none' }} />
                         </div>
                         <div>
-                            <input type="text" name="studentContact" value={formData.studentContact} onInput={(e) => { e.target.value = e.target.value.replace(/\D/g, '').slice(0, 10); handleInput(e); }} placeholder="Student Contact Number" style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none' }} />
+                            <input type="text" name="studentContact" value={formData.studentContact} onInput={(e) => { e.target.value = e.target.value.replace(/\D/g, '').slice(0, 10); handleInput(e); }} placeholder="Student Contact Number*" style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none' }} />
                         </div>
                         <div style={{ gridColumn: '1 / -1' }}>
-                            <textarea name="address" value={formData.address} onChange={handleInput} placeholder="Full Residential Address" rows="3" style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none', resize: 'vertical' }}></textarea>
+                            <textarea name="address" value={formData.address} onChange={handleInput} placeholder="Full Residential Address*" rows="3" style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none', resize: 'vertical' }}></textarea>
                         </div>
                     </div>
                 </div>
@@ -1309,13 +1463,13 @@ const EnrollStudentPage = () => {
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '25px', marginTop: '10px' }}>
                         <div>
                             <select name="branch" value={formData.branch} onChange={handleInput} style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none', color: '#555', appearance: 'none', background: 'url("data:image/svg+xml;utf8,<svg fill=%27black%27 height=%2724%27 viewBox=%270 0 24 24%27 width=%2724%27 xmlns=%27http://www.w3.org/2000/svg%27><path d=%27M7 10l5 5 5-5z%27/><path d=%27M0 0h24v24H0z%27 fill=%27none%27/></svg>") no-repeat right 10px center' }}>
-                                <option value="" disabled>Select Branch</option>
+                                <option value="" disabled>Select Branch*</option>
                                 <option>Nashik Main</option>
                             </select>
                         </div>
                         <div>
                             <select name="course" value={formData.course} onChange={handleInput} style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none', color: '#555', appearance: 'none', background: 'url("data:image/svg+xml;utf8,<svg fill=%27black%27 height=%2724%27 viewBox=%270 0 24 24%27 width=%2724%27 xmlns=%27http://www.w3.org/2000/svg%27><path d=%27M7 10l5 5 5-5z%27/><path d=%27M0 0h24v24H0z%27 fill=%27none%27/></svg>") no-repeat right 10px center' }}>
-                                <option value="" disabled>Select Course</option>
+                                <option value="" disabled>Select Course*</option>
                                 <option>Staff Selection Commission (SSC-CGL)</option>
                                 <option>POLICE/ARMY/MILITARY TRAINING BATCH</option>
                                 <option>XI - Science PCMB [JEE-NEET-CET]</option>
@@ -1331,7 +1485,7 @@ const EnrollStudentPage = () => {
                             </select>
                         </div>
                         <div>
-                            <input type="text" name="batchTiming" value={formData.batchTiming} onChange={handleInput} placeholder="Batch Timing" style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none' }} />
+                            <input type="text" name="batchTiming" value={formData.batchTiming} onChange={handleInput} placeholder="Batch Timing*" style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none' }} />
                         </div>
                     </div>
                 </div>
@@ -1344,13 +1498,13 @@ const EnrollStudentPage = () => {
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '25px', marginTop: '10px' }}>
                         <div>
-                            <input type="text" name="previousSchool" value={formData.previousSchool} onChange={handleInput} placeholder="Previous School/College Name" style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none' }} />
+                            <input type="text" name="previousSchool" value={formData.previousSchool} onChange={handleInput} placeholder="Previous School/College Name*" style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none' }} />
                         </div>
                         <div>
-                            <input type="number" name="tenthPercent" value={formData.tenthPercent} onChange={handleInput} placeholder="10th Percentage" style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none' }} />
+                            <input type="number" name="tenthPercent" value={formData.tenthPercent} onChange={handleInput} placeholder="10th Percentage*" style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none' }} />
                         </div>
                         <div>
-                            <input type="number" name="twelfthPercent" value={formData.twelfthPercent} onChange={handleInput} placeholder="12th Percentage" style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none' }} />
+                            <input type="number" name="twelfthPercent" value={formData.twelfthPercent} onChange={handleInput} placeholder="12th Percentage*" style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none' }} />
                         </div>
                     </div>
                 </div>
@@ -1363,41 +1517,41 @@ const EnrollStudentPage = () => {
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '25px', marginTop: '10px' }}>
                         <div>
-                            <input type="text" name="bankName" value={formData.bankName} onChange={handleInput} placeholder="Bank Name" style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none' }} />
+                            <input type="text" name="bankName" value={formData.bankName} onChange={handleInput} placeholder="Bank Name*" style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none' }} />
                         </div>
                         <div>
-                            <input type="text" name="accountNumber" value={formData.accountNumber} onInput={(e) => { e.target.value = e.target.value.replace(/\D/g, ''); handleInput(e); }} placeholder="Account Number" style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none' }} />
+                            <input type="text" name="accountNumber" value={formData.accountNumber} onInput={(e) => { e.target.value = e.target.value.replace(/\D/g, ''); handleInput(e); }} placeholder="Account Number*" style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none' }} />
                         </div>
                         <div>
-                            <input type="text" name="ifscCode" value={formData.ifscCode} onChange={handleInput} placeholder="IFSC Code" style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none' }} />
+                            <input type="text" name="ifscCode" value={formData.ifscCode} onChange={handleInput} placeholder="IFSC Code*" style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none' }} />
                         </div>
                         <div>
-                            <input type="text" name="accountHolder" value={formData.accountHolder} onChange={handleInput} placeholder="Account Holder Name" style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none' }} />
+                            <input type="text" name="accountHolder" value={formData.accountHolder} onChange={handleInput} placeholder="Account Holder Name*" style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none' }} />
                         </div>
                     </div>
                     <div style={{ gridColumn: '1 / -1', borderTop: '1px solid #eee', marginTop: '15px', paddingTop: '25px' }}>
                         <div style={{ fontWeight: 'bold', color: '#555', marginBottom: '15px' }}>Fees & Payment Details</div>
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '25px' }}>
                             <div>
-                                <input type="number" name="totalFee" value={formData.totalFee} onChange={handleInput} placeholder="Total Fee (₹)" style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none' }} />
+                                <input type="text" name="totalFee" value={formData.totalFee} onInput={(e) => { e.target.value = e.target.value.replace(/\D/g, ''); handleInput(e); }} placeholder="Total Fee (₹)*" style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none' }} />
                             </div>
                             <div>
-                                <input type="number" name="amountReceived" value={formData.amountReceived} onChange={handleInput} placeholder="Amount Received (₹)" style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none' }} />
+                                <input type="text" name="amountReceived" value={formData.amountReceived} onInput={(e) => { e.target.value = e.target.value.replace(/\D/g, ''); handleInput(e); }} placeholder="Amount Received (₹)*" style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none' }} />
                             </div>
                             <div>
                                 <input type="text" value={dueFees} readOnly placeholder="Due Fees (₹)" style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none', background: '#f8f9fa' }} />
                             </div>
                             <div style={{ position: 'relative' }}>
-                                <label style={{ position: 'absolute', top: '-8px', left: '10px', background: 'white', padding: '0 5px', fontSize: '12px', color: '#666' }}>Payment Mode</label>
+                                <label style={{ position: 'absolute', top: '-8px', left: '10px', background: 'white', padding: '0 5px', fontSize: '12px', color: '#666' }}>Payment Mode*</label>
                                 <select name="paymentMode" value={formData.paymentMode} onChange={handleInput} style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none', color: '#555', appearance: 'none', background: 'url("data:image/svg+xml;utf8,<svg fill=%27black%27 height=%2724%27 viewBox=%270 0 24 24%27 width=%2724%27 xmlns=%27http://www.w3.org/2000/svg%27><path d=%27M7 10l5 5 5-5z%27/><path d=%27M0 0h24v24H0z%27 fill=%27none%27/></svg>") no-repeat right 10px center' }}>
-                                    <option value="" disabled>Select Payment Mode</option>
+                                    <option value="" disabled>Select Payment Mode*</option>
                                     <option>Cash</option>
                                     <option>Online</option>
                                     <option>Net Banking</option>
                                 </select>
                             </div>
                             <div style={{ position: 'relative' }}>
-                                <label style={{ position: 'absolute', top: '-8px', left: '10px', background: 'white', padding: '0 5px', fontSize: '12px', color: '#666' }}>Installment</label>
+                                <label style={{ position: 'absolute', top: '-8px', left: '10px', background: 'white', padding: '0 5px', fontSize: '12px', color: '#666' }}>Installment*</label>
                                 <select name="installment" value={formData.installment} onChange={handleInput} style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none', color: '#555', appearance: 'none', background: 'url("data:image/svg+xml;utf8,<svg fill=%27black%27 height=%2724%27 viewBox=%270 0 24 24%27 width=%2724%27 xmlns=%27http://www.w3.org/2000/svg%27><path d=%27M7 10l5 5 5-5z%27/><path d=%27M0 0h24v24H0z%27 fill=%27none%27/></svg>") no-repeat right 10px center' }}>
                                     <option value="No">No</option>
                                     <option value="Yes">Yes</option>
@@ -1418,7 +1572,7 @@ const EnrollStudentPage = () => {
                     </button>
                 )}
                 {step < 4 && (
-                    <button onClick={() => setStep(step + 1)} style={{ padding: '12px 24px', background: '#8b5cf6', border: 'none', borderRadius: '6px', cursor: 'pointer', color: 'white', fontWeight: 'bold', boxShadow: '0 4px 6px rgba(139, 92, 246, 0.2)' }}>
+                    <button onClick={handleNextStep} style={{ padding: '12px 24px', background: '#8b5cf6', border: 'none', borderRadius: '6px', cursor: 'pointer', color: 'white', fontWeight: 'bold', boxShadow: '0 4px 6px rgba(139, 92, 246, 0.2)' }}>
                         Next Step
                     </button>
                 )}
@@ -1985,6 +2139,7 @@ function App() {
                         <Route path="/" element={<ProtectedRoute><Layout logout={logout} user={user}><Dashboard /></Layout></ProtectedRoute>} />
                         <Route path="/attendance" element={<ProtectedRoute><Layout logout={logout} user={user}><AttendancePage /></Layout></ProtectedRoute>} />
                         <Route path="/admissions" element={<ProtectedRoute><Layout logout={logout} user={user}><AdmissionsPage /></Layout></ProtectedRoute>} />
+                        <Route path="/bulk-upload" element={<ProtectedRoute><Layout logout={logout} user={user}><BulkUploadPage /></Layout></ProtectedRoute>} />
                         <Route path="/enroll-student" element={<ProtectedRoute><Layout logout={logout} user={user}><EnrollStudentPage /></Layout></ProtectedRoute>} />
                         <Route path="/birthdays" element={<ProtectedRoute><Layout logout={logout} user={user}><BirthdaysPage /></Layout></ProtectedRoute>} />
                         <Route path="/teachers" element={<ProtectedRoute><Layout logout={logout} user={user}><TeachersPage /></Layout></ProtectedRoute>} />

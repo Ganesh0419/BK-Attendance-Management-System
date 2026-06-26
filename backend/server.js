@@ -136,6 +136,8 @@ const userSchema = new mongoose.Schema({
   marks10th: { type: String },
   marks12th: { type: String },
   address: { type: String },
+  fatherName: { type: String },
+  motherName: { type: String },
   branch: { type: String },
   courses: { type: [String] },
   fee: { type: Number },
@@ -457,9 +459,9 @@ app.post(['/iclock/cdata', '/iclock/cdata.aspx'], async (req, res) => {
         let userPhoto = null;
         if (mongoose.connection.readyState === 1) {
           try {
-            let dbUser = await User.findOne({ id: parseInt(userId) });
-            if (!dbUser) {
-              dbUser = await User.findOne({ fingerprint_id: String(userId) });
+            let dbUser = await User.findOne({ fingerprint_id: String(userId) });
+            if (!dbUser && !isNaN(parseInt(userId))) {
+              dbUser = await User.findOne({ id: parseInt(userId) });
             }
             if (dbUser) {
               userName = dbUser.name;
@@ -468,7 +470,10 @@ app.post(['/iclock/cdata', '/iclock/cdata.aspx'], async (req, res) => {
           } catch (e) { /* ignore */ }
         } else {
           const localUsers = getLocalUsers();
-          const dbUser = localUsers.find(u => u.id === parseInt(userId) || String(u.id) === String(userId) || u.fingerprint_id === String(userId));
+          let dbUser = localUsers.find(u => String(u.fingerprint_id) === String(userId));
+          if (!dbUser) {
+            dbUser = localUsers.find(u => String(u.id) === String(userId));
+          }
           if (dbUser) {
             userName = dbUser.name;
             userPhoto = dbUser.photo;
@@ -760,6 +765,30 @@ app.get('/api/users', async (req, res) => {
   }
 });
 
+// Fetch user mapping (fingerprint_id & id -> name)
+app.get('/api/users/map', async (req, res) => {
+  const map = {};
+  if (mongoose.connection.readyState !== 1) {
+    const localUsers = getLocalUsers();
+    localUsers.forEach(u => {
+      if (u.id) map[String(u.id)] = u.name;
+      if (u.fingerprint_id) map[String(u.fingerprint_id)] = u.name;
+    });
+    return res.json(map);
+  }
+
+  try {
+    const users = await User.find({});
+    users.forEach(u => {
+      if (u.id) map[String(u.id)] = u.name;
+      if (u.fingerprint_id) map[String(u.fingerprint_id)] = u.name;
+    });
+    res.json(map);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Add or update a user (both DB and local JSON database fallback supported)
 app.post('/api/users', async (req, res) => {
   const { id, name, role, fingerprint_id, photo } = req.body;
@@ -951,6 +980,6 @@ app.post('/api/receipts/generate', async (req, res) => {
 // Start unified server on ALL interfaces so LAN devices (eSSL) can reach it
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Unified Backend & ADMS Server is running on http://0.0.0.0:${PORT}`);
-  console.log(`📡 LAN accessible at http://192.168.0.107:${PORT}`);
-  console.log(`🔬 ADMS endpoint: POST http://192.168.0.107:${PORT}/iclock/cdata`);
+  console.log(`📡 LAN accessible at http://192.168.0.108:${PORT}`);
+  console.log(`🔬 ADMS endpoint: POST http://192.168.0.108:${PORT}/iclock/cdata`);
 });
