@@ -5,7 +5,7 @@ import { io } from 'socket.io-client';
 import api from './api';
 import logo from './logo.jpeg';
 
-const backendHost = 'localhost';
+const backendHost = '192.168.0.107';
 const socket = io(`http://${backendHost}:8080`);
 const AuthContext = React.createContext(null);
 
