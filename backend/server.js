@@ -6,6 +6,7 @@ const { Server } = require('socket.io');
 const mongoose = require('mongoose');
 const fs = require('fs');
 const path = require('path');
+const excel = require('exceljs');
 
 const app = express();
 const server = http.createServer(app);
@@ -29,9 +30,8 @@ app.use('/iclock', (req, res, next) => {
   }
 });
 
-// Parse JSON body for all standard API requests with a larger limit for images
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
+// Parse JSON body for all standard API requests
+app.use(express.json());
 
 // Initialize Socket.io Server
 const io = new Server(server, {
@@ -193,12 +193,12 @@ async function seedUsers() {
   try {
     // Unset the old photoUrl field from all users in MongoDB
     await User.updateMany({}, { $unset: { photoUrl: "" } });
-    
+
     const localUsers = getLocalUsers();
     for (const user of localUsers) {
       await User.findOneAndUpdate(
         { id: user.id },
-        { 
+        {
           name: user.name,
           role: user.role,
           fingerprint_id: user.fingerprint_id,
@@ -319,7 +319,7 @@ function parsePhotoRequest(req) {
   if (nullByteIndex !== -1 && nullByteIndex < 1000) {
     const textPart = buffer.toString('utf8', 0, nullByteIndex);
     const binaryData = buffer.slice(nullByteIndex + 1);
-    
+
     const lines = textPart.split(/\r?\n/);
     const metadata = {};
     for (const line of lines) {
@@ -330,7 +330,7 @@ function parsePhotoRequest(req) {
         metadata[key] = val;
       }
     }
-    
+
     if (metadata['pin'] || metadata['size']) {
       return {
         pin: metadata['pin'] || '',
@@ -371,7 +371,7 @@ app.post(['/iclock/cdata', '/iclock/cdata.aspx'], async (req, res) => {
 
   console.log(`[ADMS] 📥 Incoming Data from Device: ${SN} (Type: ${table})`);
   await trackDeviceActivity(SN);
-  
+
   if (table === 'ATTPHOTO' || table === 'BIOPHOTO') {
     const parsed = parsePhotoRequest(req);
     if (parsed && parsed.imageBuffer && parsed.imageBuffer.length > 0) {
@@ -381,17 +381,17 @@ app.post(['/iclock/cdata', '/iclock/cdata.aspx'], async (req, res) => {
         const parts = pinStr.split('-');
         userId = parts[parts.length - 1].trim();
       }
-      
+
       const timestamp = Date.now();
       const filename = `punch_${userId}_${timestamp}.jpg`;
       const filepath = path.join(UPLOADS_DIR, filename);
-      
+
       try {
         fs.writeFileSync(filepath, parsed.imageBuffer);
         const relativePath = `/uploads/${filename}`;
-        
+
         console.log(`📸 [ADMS] Saved photo for User ${userId} (from PIN: ${parsed.pin}) to ${relativePath}`);
-        
+
         // 1. Update user profile photo in MongoDB
         if (mongoose.connection.readyState === 1) {
           try {
@@ -407,7 +407,7 @@ app.post(['/iclock/cdata', '/iclock/cdata.aspx'], async (req, res) => {
             console.error(`❌ MongoDB error updating photo for User ${userId}:`, dbErr.message);
           }
         }
-        
+
         // 2. Update local users.json file
         try {
           const localUsers = getLocalUsers();
@@ -419,20 +419,20 @@ app.post(['/iclock/cdata', '/iclock/cdata.aspx'], async (req, res) => {
         } catch (fileErr) {
           console.error(`❌ File error updating photo for User ${userId}:`, fileErr.message);
         }
-        
+
         // 3. Emit the socket update to all connected clients
         io.emit('live_punch_photo', {
           userId: String(userId),
           userPhoto: relativePath
         });
-        
+
       } catch (err) {
         console.error(`❌ Error writing upload photo to disk:`, err.message);
       }
     } else {
       console.log(`⚠️ [ADMS] Photo upload received but could not parse. Buffer Length: ${Buffer.isBuffer(req.body) ? req.body.length : 0}`);
     }
-    
+
     return res.send("OK");
   }
 
@@ -440,10 +440,10 @@ app.post(['/iclock/cdata', '/iclock/cdata.aspx'], async (req, res) => {
     console.log("\n=== New Live Punch! ===");
     console.log(body);
     console.log("===========================\n");
-    
+
     // Normalize body to handle carriage returns as well
     const punches = body.trim().split(/\r?\n/);
-    
+
     for (const punch of punches) {
       if (!punch) continue;
       const parts = punch.split('\t');
@@ -452,7 +452,7 @@ app.post(['/iclock/cdata', '/iclock/cdata.aspx'], async (req, res) => {
         const timestamp = parts[1].trim();
         const state = parts[2] ? parts[2].trim() : '';
         const verifyMode = parts[3] ? parts[3].trim() : (state === '15' ? '15' : '');
-        
+
         // Try to resolve user name and photo from DB
         let userName = `User ${userId}`;
         let userPhoto = null;
@@ -480,7 +480,7 @@ app.post(['/iclock/cdata', '/iclock/cdata.aspx'], async (req, res) => {
           userId,
           userName,
           userPhoto,
-          timestamp: new Date(timestamp).toLocaleString('en-IN'),
+          timestamp: new Date(timestamp).toISOString(),
           deviceSn: SN || 'NYU7260401606',
           verifyMode
         };
@@ -512,7 +512,7 @@ app.post(['/iclock/cdata', '/iclock/cdata.aspx'], async (req, res) => {
 // Auth Login
 app.post('/api/auth/login', (req, res) => {
   const { email, password } = req.body;
-  
+
   if (email && password) {
     res.json({
       token: 'mock-jwt-token-12345',
@@ -604,10 +604,38 @@ app.post('/api/users/enroll', async (req, res) => {
   }
 });
 
+// Update User
+app.put('/api/users/:id', async (req, res) => {
+  const { id } = req.params;
+  if (mongoose.connection.readyState !== 1) {
+    return res.status(503).json({ error: 'Database offline' });
+  }
+  try {
+    const updatedUser = await User.findOneAndUpdate({ id: parseInt(id) }, req.body, { new: true });
+    res.json({ success: true, user: updatedUser });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Delete User
+app.delete('/api/users/:id', async (req, res) => {
+  const { id } = req.params;
+  if (mongoose.connection.readyState !== 1) {
+    return res.status(503).json({ error: 'Database offline' });
+  }
+  try {
+    await User.findOneAndDelete({ id: parseInt(id) });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Get Student Attendance History (Calculated In/Out)
 app.get('/api/attendance/student/:fingerprint_id', async (req, res) => {
   const { fingerprint_id } = req.params;
-  
+
   if (mongoose.connection.readyState !== 1) {
     // Return mock data if offline
     return res.json({
@@ -644,7 +672,7 @@ app.get('/api/attendance/student/:fingerprint_id', async (req, res) => {
       const firstIn = dayPunches[0].timestamp;
       const lastOut = dayPunches[dayPunches.length - 1].timestamp;
       const entryCount = Math.max(1, Math.floor(dayPunches.length / 2)); // rough estimate if missing out punches
-      
+
       let durationMs = lastOut.getTime() - firstIn.getTime();
       // If only one punch, duration is 0
       if (dayPunches.length === 1) durationMs = 0;
@@ -668,7 +696,7 @@ app.get('/api/attendance/student/:fingerprint_id', async (req, res) => {
         totalEntries: totalEntriesAllTime,
         totalHours: (totalMsAllTime / (1000 * 60 * 60)).toFixed(2)
       },
-      records: records.sort((a,b) => new Date(b.date) - new Date(a.date)) // newest first
+      records: records.sort((a, b) => new Date(b.date) - new Date(a.date)) // newest first
     });
 
   } catch (err) {
@@ -776,7 +804,7 @@ app.get('/api/admin/dashboard', async (req, res) => {
 
   try {
     const totalUsers = await User.countDocuments();
-    
+
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
     const endOfToday = new Date();
@@ -789,7 +817,7 @@ app.get('/api/admin/dashboard', async (req, res) => {
     const punchedTodayIds = [...new Set(todaysPunches.map(p => p.userId))];
 
     const recentAttendance = [];
-    
+
     // Group punches by user to find inTime and outTime
     const punchesByUser = {};
     todaysPunches.forEach(p => {
@@ -815,7 +843,12 @@ app.get('/api/admin/dashboard', async (req, res) => {
 
     for (const userId of userIds) {
       const userPunches = punchesByUser[userId].sort((a, b) => a.timestamp - b.timestamp);
+<<<<<<< HEAD
       const user = userMap[String(userId)];
+=======
+      let user = await User.findOne({ fingerprint_id: String(userId) });
+      if (!user) user = await User.findOne({ id: parseInt(userId) || 0 });
+>>>>>>> friend/main
 
       recentAttendance.push({
         userId: user ? user.fingerprint_id : userId,
@@ -924,6 +957,7 @@ app.post('/api/users', async (req, res) => {
     return res.json({ success: true, user: userPayload });
   }
 });
+
 
 
 // Update full user profile (including fees)
@@ -1174,6 +1208,7 @@ app.get('/api/staff/payroll-summary', async (req, res) => {
   }
 });
 
+
 // User ID -> Name mapping for Live Sync Feed
 app.get('/api/users/map', async (req, res) => {
   if (mongoose.connection.readyState !== 1) {
@@ -1196,7 +1231,7 @@ app.get('/api/users/map', async (req, res) => {
 // Biometric Webhook (Simulator punches)
 app.post('/api/biometric/webhook', async (req, res) => {
   const { fingerprint_id, timestamp, direction, verifyMode } = req.body;
-  
+
   let userName = `User ${fingerprint_id}`;
   let userPhoto = null;
 
@@ -1219,13 +1254,13 @@ app.post('/api/biometric/webhook', async (req, res) => {
       userPhoto = dbUser.photo;
     }
   }
-  
+
   // Emit live punch to frontend via socket immediately (enables real-time simulator updates)
   io.emit('live_punch', {
     userId: fingerprint_id,
     userName,
     userPhoto,
-    timestamp: new Date(timestamp).toLocaleString(),
+    timestamp: new Date(timestamp).toISOString(),
     deviceSn: 'Simulator',
     verifyMode: verifyMode || '1'
   });
@@ -1243,7 +1278,7 @@ app.post('/api/biometric/webhook', async (req, res) => {
       deviceSn: 'Simulator',
       direction: direction || 'in'
     });
-    
+
     console.log(`💾 Simulated punch saved: User ${fingerprint_id} (${direction})`);
     res.json({ success: true, dbSaved: true, punch });
   } catch (err) {
@@ -1300,26 +1335,259 @@ app.post('/api/receipts/generate', async (req, res) => {
       { $inc: { seq: 1 } },
       { new: true }
     );
-    
+
     if (!counterDoc) {
-       counterDoc = new Counter({ _id: 'receiptId', seq: 1200 });
-       await counterDoc.save();
+      counterDoc = new Counter({ _id: 'receiptId', seq: 1200 });
+      await counterDoc.save();
     }
-    
+
     const receiptNo = counterDoc.seq;
     const now = new Date();
     const formattedDate = String(now.getDate()).padStart(2, '0') + '/' + String(now.getMonth() + 1).padStart(2, '0') + '/' + now.getFullYear();
-    
+
     const payload = {
       receiptNo: receiptNo.toString().padStart(4, '0'),
       ...req.body,
       generatedAt: formattedDate
     };
-    
+
     res.json(payload);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
+});
+async function generateMonthSheet(workbook, monthString, department, usersList, PunchModel) {
+  const [year, monthNum] = monthString.split('-');
+  const startDate = new Date(year, parseInt(monthNum) - 1, 1);
+  const endDate = new Date(year, parseInt(monthNum), 0, 23, 59, 59, 999);
+
+  let users = usersList;
+  if (department && department !== 'All' && department !== 'undefined') {
+    if (department === 'Teachers') {
+      users = users.filter(u => u.role && u.role.toLowerCase() === 'teacher');
+    } else if (department === 'Staff') {
+      users = users.filter(u => u.role && u.role.toLowerCase() === 'staff');
+    } else {
+      users = users.filter(u => u.courses && u.courses.includes(department));
+    }
+  }
+
+  const punches = await PunchModel.find({ timestamp: { $gte: startDate, $lte: endDate } }).sort({ timestamp: 1 });
+  const punchesByUser = {};
+  punches.forEach(p => {
+    const uid = String(p.userId);
+    if (!punchesByUser[uid]) punchesByUser[uid] = [];
+    punchesByUser[uid].push(p);
+  });
+
+  const monthName = startDate.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+  const sheetName = monthName.replace(/[\*\?\/\\\[\]]/g, ''); // Ensure safe sheet name
+  const worksheet = workbook.addWorksheet(sheetName, {
+    pageSetup: { orientation: 'landscape', paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0 }
+  });
+
+  // Setup print header/footer (Admin signature)
+  worksheet.headerFooter.oddFooter = `&LGenerated By:- BioAttend Admin&CAdmin Signature: _______________________&RPage &P of &N`;
+
+  // Global Headers
+  worksheet.mergeCells('A1:AF1');
+  worksheet.getCell('A1').value = 'Dr.Babasaheb Ambedkar Research and Training Institute, ( BARTI) Pune';
+  worksheet.getCell('A1').font = { bold: true, size: 14 };
+  worksheet.getCell('A1').alignment = { horizontal: 'center' };
+
+  worksheet.mergeCells('A2:AF2');
+  worksheet.getCell('A2').value = 'JEE NEET Batch Coaching Programme 2024-26';
+  worksheet.getCell('A2').font = { bold: true, size: 12 };
+  worksheet.getCell('A2').alignment = { horizontal: 'center' };
+
+  worksheet.mergeCells('A3:AF3');
+  worksheet.getCell('A3').value = 'Students Biometric Attendance Format';
+  worksheet.getCell('A3').font = { bold: true, size: 12 };
+  worksheet.getCell('A3').alignment = { horizontal: 'center' };
+
+  worksheet.mergeCells('A4:AF4');
+  worksheet.getCell('A4').value = 'Name Of the Coaching Center- BK Educational and Welfare Society,Nashik';
+  worksheet.getCell('A4').font = { bold: true, size: 12 };
+  worksheet.getCell('A4').alignment = { horizontal: 'center' };
+
+  worksheet.mergeCells('A5:AF5');
+  worksheet.getCell('A5').value = `${startDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })} To ${endDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}`;
+  worksheet.getCell('A5').font = { bold: true, size: 11 };
+  worksheet.getCell('A5').alignment = { horizontal: 'center' };
+
+  worksheet.mergeCells('A6:AF6');
+  worksheet.getCell('A6').value = `Generated On: ${new Date().toLocaleString('en-IN')}`;
+  worksheet.getCell('A6').font = { bold: true, size: 10 };
+  worksheet.getCell('A6').alignment = { horizontal: 'right' };
+
+  const daysInMonth = endDate.getDate();
+  let currentRow = 8;
+
+  // Header Day Names Row
+  const dayRowValues = ['Day'];
+  const dateRowValues = ['Days'];
+  for (let d = 1; d <= daysInMonth; d++) {
+    dayRowValues.push(`Day${d}`);
+    const cDate = new Date(year, parseInt(monthNum) - 1, d);
+    dateRowValues.push(`${String(d).padStart(2, '0')}-${cDate.toLocaleDateString('en-US', { month: 'short' })}\n${cDate.toLocaleDateString('en-US', { weekday: 'short' })}`);
+  }
+
+  const dayRow = worksheet.getRow(currentRow);
+  dayRow.values = dayRowValues;
+  dayRow.font = { bold: true };
+  currentRow++;
+
+  const dateRow = worksheet.getRow(currentRow);
+  dateRow.values = dateRowValues;
+  dateRow.font = { bold: true, size: 9 };
+  dateRow.alignment = { wrapText: true };
+  currentRow++;
+
+  worksheet.mergeCells(`A${currentRow}:AF${currentRow}`);
+  worksheet.getCell(`A${currentRow}`).value = `Department: ${department && department !== 'All' && department !== 'undefined' ? department : 'All Departments'}`;
+  worksheet.getCell(`A${currentRow}`).font = { bold: true };
+  currentRow++;
+
+  if (users.length === 0) {
+    worksheet.getCell(`A${currentRow}`).value = 'No users found for this department.';
+    return;
+  }
+
+  users.forEach(user => {
+    // User identity row
+    worksheet.mergeCells(`A${currentRow}:J${currentRow}`);
+    worksheet.getCell(`A${currentRow}`).value = `Employee Code:- ${user.fingerprint_id || user.id || 'N/A'}`;
+    worksheet.getCell(`A${currentRow}`).font = { bold: true };
+
+    worksheet.mergeCells(`K${currentRow}:V${currentRow}`);
+    worksheet.getCell(`K${currentRow}`).value = `Employee Name:- ${user.name}`;
+    worksheet.getCell(`K${currentRow}`).font = { bold: true };
+
+    worksheet.mergeCells(`W${currentRow}:AF${currentRow}`);
+    worksheet.getCell(`W${currentRow}`).value = `Designation - ${user.role}`;
+    worksheet.getCell(`W${currentRow}`).font = { bold: true };
+
+    currentRow++;
+
+    // Day1..Day31 Header
+    const uDayRow = worksheet.getRow(currentRow);
+    uDayRow.values = dayRowValues;
+    uDayRow.font = { bold: true };
+    currentRow++;
+
+    const userPunches = punchesByUser[String(user.fingerprint_id)] || punchesByUser[String(user.id)] || [];
+    const punchesByDate = {};
+    userPunches.forEach(p => {
+      const d = p.timestamp.getDate();
+      if (!punchesByDate[d]) punchesByDate[d] = [];
+      punchesByDate[d].push(p);
+    });
+
+    const inTimes = ['In Time'];
+    const outTimes = ['Out Time'];
+    const durations = ['T Duration'];
+    const statuses = ['Status'];
+
+    for (let day = 1; day <= daysInMonth; day++) {
+      const dayPunches = punchesByDate[day] || [];
+
+      let inTime = '00:00';
+      let outTime = '00:00';
+      let tDuration = '00:00';
+      let status = 'A';
+
+      const currentDayDate = new Date(year, parseInt(monthNum) - 1, day);
+      if (currentDayDate.getDay() === 0) { // Sunday
+        status = 'WO';
+      }
+
+      if (dayPunches.length > 0) {
+        const firstPunch = dayPunches[0];
+        const lastPunch = dayPunches[dayPunches.length - 1];
+        inTime = firstPunch.timestamp.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
+        status = 'P';
+
+        if (dayPunches.length > 1) {
+          outTime = lastPunch.timestamp.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
+          const diffMs = lastPunch.timestamp - firstPunch.timestamp;
+          const hours = Math.floor(diffMs / 3600000);
+          const minutes = Math.floor((diffMs % 3600000) / 60000);
+          tDuration = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+        }
+      }
+
+      inTimes.push(inTime);
+      outTimes.push(outTime);
+      durations.push(tDuration);
+      statuses.push(status);
+    }
+
+    worksheet.getRow(currentRow).values = inTimes;
+    currentRow++;
+    worksheet.getRow(currentRow).values = outTimes;
+    currentRow++;
+    worksheet.getRow(currentRow).values = durations;
+    currentRow++;
+    worksheet.getRow(currentRow).values = statuses;
+    currentRow++;
+  });
+
+  // Styling columns
+  worksheet.getColumn(1).width = 12;
+  for (let i = 2; i <= 32; i++) {
+    worksheet.getColumn(i).width = 6.5;
+  }
+}
+
+// Export Monthly Attendance Report matching PDF spec
+app.get('/api/attendance/export-monthly', async (req, res) => {
+  try {
+    const { month, department } = req.query; // format: 'YYYY-MM'
+    if (!month) return res.status(400).json({ error: 'Month is required in YYYY-MM format' });
+
+    const workbook = new excel.Workbook();
+    const usersList = await User.find({});
+
+    await generateMonthSheet(workbook, month, department, usersList, Punch);
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename=Attendance_Report_${month}.xlsx`);
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (err) {
+    console.error('Export Error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Export Yearly Attendance Report (12 Sheets)
+app.get('/api/attendance/export-yearly', async (req, res) => {
+  try {
+    const { year, department } = req.query; // format: 'YYYY'
+    if (!year) return res.status(400).json({ error: 'Year is required in YYYY format' });
+
+    const workbook = new excel.Workbook();
+    const usersList = await User.find({});
+
+    for (let m = 1; m <= 12; m++) {
+      const monthStr = `${year}-${String(m).padStart(2, '0')}`;
+      await generateMonthSheet(workbook, monthStr, department, usersList, Punch);
+    }
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename=Attendance_Report_${year}.xlsx`);
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (err) {
+    console.error('Export Yearly Error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Catch-all for 404
+app.use((req, res) => {
+  console.log(`[404 NOT FOUND] ${req.method} ${req.originalUrl}`);
+  res.status(404).send(`Cannot ${req.method} ${req.originalUrl}`);
 });
 
 // Start unified server on ALL interfaces so LAN devices (eSSL) can reach it
