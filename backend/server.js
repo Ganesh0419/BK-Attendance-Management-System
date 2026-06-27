@@ -29,8 +29,9 @@ app.use('/iclock', (req, res, next) => {
   }
 });
 
-// Parse JSON body for all standard API requests
-app.use(express.json());
+// Parse JSON body for all standard API requests with a larger limit for images
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // Initialize Socket.io Server
 const io = new Server(server, {
@@ -529,7 +530,7 @@ app.post('/api/auth/login', (req, res) => {
 
 // Enroll New Student (from Enrollment Form)
 app.post('/api/users/enroll', async (req, res) => {
-  const { name, email, role, fingerprint_id, experience, subject, timing, salary, profession } = req.body;
+  const { name, email, role, fingerprint_id, experience, subject, timing, salary, profession, photo } = req.body;
   if (!name || !fingerprint_id) {
     return res.status(400).json({ error: 'Name and Biometric Register ID are required' });
   }
@@ -543,10 +544,24 @@ app.post('/api/users/enroll', async (req, res) => {
     const lastUser = await User.findOne().sort({ id: -1 });
     const nextId = lastUser ? lastUser.id + 1 : 1;
 
+    let relativePath = null;
+    if (photo && photo.startsWith('data:image')) {
+      const matches = photo.match(/^data:image\/([a-zA-Z0-9+]+);base64,(.+)$/);
+      if (matches && matches.length === 3) {
+        const ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
+        const buffer = Buffer.from(matches[2], 'base64');
+        const filename = `student_${nextId}_${Date.now()}.${ext}`;
+        const filepath = path.join(UPLOADS_DIR, filename);
+        fs.writeFileSync(filepath, buffer);
+        relativePath = `/uploads/${filename}`;
+      }
+    }
+
     const newUser = await User.create({
       id: nextId,
       name,
       role: role || 'student',
+      photo: relativePath,
       fingerprint_id,
       email: req.body.email,
       studentPhone: req.body.studentContact,
@@ -582,6 +597,9 @@ app.post('/api/users/enroll', async (req, res) => {
     res.json({ success: true, user: newUser });
   } catch (err) {
     console.error("Enrollment error:", err.message);
+    if (err.code === 11000 && err.keyPattern && err.keyPattern.fingerprint_id) {
+      return res.status(400).json({ error: `The Biometric Registration No. (Fingerprint ID) '${err.keyValue.fingerprint_id}' is already registered to another user. Please choose a unique ID.` });
+    }
     res.status(500).json({ error: err.message });
   }
 });
@@ -633,7 +651,8 @@ app.get('/api/attendance/student/:fingerprint_id', async (req, res) => {
         firstIn: firstIn.toLocaleTimeString('en-IN'),
         lastOut: dayPunches.length > 1 ? lastOut.toLocaleTimeString('en-IN') : 'N/A',
         totalEntries: entryCount,
-        durationMinutes: Math.round(durationMs / 60000)
+        durationMinutes: Math.round(durationMs / 60000),
+        durationSeconds: Math.round(durationMs / 1000)
       });
     }
 
@@ -797,6 +816,71 @@ app.post('/api/users', async (req, res) => {
     }
     saveLocalUsers(localUsers);
     return res.json({ success: true, user: userPayload });
+  }
+});
+
+
+// Update full user profile (including fees)
+app.put('/api/users/:id', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const updateData = req.body;
+    
+    console.log(`[PUT /api/users/${id}] Attempting update. ID received: "${id}"`);
+    if (updateData._id) {
+      delete updateData._id;
+    }
+    
+    if (mongoose.connection.readyState === 1) {
+      // Find by exact string or regex for trailing spaces
+      const user = await User.findOneAndUpdate(
+        { $or: [{ fingerprint_id: new RegExp(`^${id}\\s*$`) }, { id: parseInt(id) || -1 }] },
+        updateData,
+        { new: true }
+      );
+      if (!user) {
+         console.log(`[PUT /api/users/${id}] User not found.`);
+         return res.status(404).json({ error: 'User not found' });
+      }
+      console.log(`[PUT /api/users/${id}] User updated successfully.`);
+      return res.json({ success: true, user });
+    } else {
+      let localUsers = getLocalUsers();
+      const index = localUsers.findIndex(u => String(u.fingerprint_id) === id || String(u.id) === id);
+      if (index === -1) return res.status(404).json({ error: 'User not found' });
+      localUsers[index] = { ...localUsers[index], ...updateData };
+      saveLocalUsers(localUsers);
+      return res.json({ success: true, user: localUsers[index] });
+    }
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Delete Student/User Profile
+app.delete('/api/users/:fingerprint_id', async (req, res) => {
+  try {
+    const fpId = req.params.fingerprint_id.trim();
+
+    // 1. Delete from Local JSON (so they don't get re-synchronized on restart)
+    let localUsers = getLocalUsers();
+    localUsers = localUsers.filter(u => String(u.fingerprint_id) !== fpId);
+    saveLocalUsers(localUsers);
+
+    let localPunches = getLocalPunches();
+    localPunches = localPunches.filter(p => String(p.userId) !== fpId && String(p.fingerprint_id) !== fpId);
+    saveLocalPunches(localPunches);
+
+    // 2. Delete from MongoDB
+    if (mongoose.connection.readyState === 1) {
+      await User.findOneAndDelete({ fingerprint_id: fpId });
+      // Also delete their punches
+      await Punch.deleteMany({ userId: fpId });
+    }
+
+    res.json({ success: true, message: 'User and their attendance records deleted from all data stores' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -978,6 +1062,7 @@ app.get('/api/staff/payroll-summary', async (req, res) => {
     });
 
     res.json(summary);
+
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1134,6 +1219,6 @@ app.post('/api/receipts/generate', async (req, res) => {
 // Start unified server on ALL interfaces so LAN devices (eSSL) can reach it
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Unified Backend & ADMS Server is running on http://0.0.0.0:${PORT}`);
-  console.log(`📡 LAN accessible at http://192.168.0.108:${PORT}`);
-  console.log(`🔬 ADMS endpoint: POST http://192.168.0.108:${PORT}/iclock/cdata`);
+  console.log(`📡 LAN accessible at http://192.168.0.107:${PORT}`);
+  console.log(`🔬 ADMS endpoint: POST http://192.168.0.107:${PORT}/iclock/cdata`);
 });

@@ -1,11 +1,12 @@
-import React, { useState, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, Link, useNavigate, Navigate, useLocation } from 'react-router-dom';
+import React, { useState, useEffect, useRef } from 'react';
+import { BrowserRouter as Router, Routes, Route, Link, useNavigate, Navigate, useLocation, useParams } from 'react-router-dom';
 import ReceiptPrintView from './ReceiptPrintView';
 import { io } from 'socket.io-client';
 import api from './api';
 import logo from './logo.jpeg';
+import { ResponsiveContainer, BarChart, CartesianGrid, XAxis, YAxis, Tooltip, Bar } from 'recharts';
 
-const backendHost = 'localhost';
+const backendHost = '192.168.0.107';
 const socket = io(`http://${backendHost}:8080`);
 const AuthContext = React.createContext(null);
 
@@ -778,6 +779,19 @@ const NewEnquiryPage = () => {
 const AdmissionsPage = () => {
     const [students, setStudents] = useState([]);
     const [selectedStudent, setSelectedStudent] = useState(null);
+    const [attendanceLogs, setAttendanceLogs] = useState([]);
+
+    useEffect(() => {
+        if (selectedStudent) {
+            api.get(`/attendance/student/${selectedStudent.fingerprint_id}`)
+                .then(res => {
+                    setAttendanceLogs(res.data.records || []);
+                })
+                .catch(err => console.error("Error fetching attendance:", err));
+        } else {
+            setAttendanceLogs([]);
+        }
+    }, [selectedStudent]);
 
     useEffect(() => {
         api.get('/users').then(res => {
@@ -819,7 +833,10 @@ const AdmissionsPage = () => {
                             <td>{new Date().toLocaleDateString('en-GB')}</td>
                             <td><span className="status approved">Enrolled</span></td>
                             <td>
-                                <button className="btn btn-primary" style={{ padding: '4px 10px' }} onClick={() => setSelectedStudent(s)}>Profile</button>
+                                <div style={{ display: 'flex', gap: '8px' }}>
+                                    <Link className="btn btn-primary" style={{ padding: '4px 10px', textDecoration: 'none', display: 'inline-block' }} to={`/student/${s.fingerprint_id}`}>Profile</Link>
+                                    <button className="btn btn-primary" style={{ padding: '4px 10px', background: '#ef4444', borderColor: '#ef4444' }} onClick={() => handleDelete(s.fingerprint_id, s.name)}>Delete</button>
+                                </div>
                             </td>
                         </tr>
                     ))}
@@ -879,6 +896,36 @@ const AdmissionsPage = () => {
                             <div style={{ gridColumn: '1 / -1', background: '#f3e8ff', padding: '15px', borderRadius: '8px', color: '#6b21a8', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                 <strong style={{ fontSize: '15px' }}>Total Net Fees</strong>
                                 <span style={{ fontSize: '20px', fontWeight: 'bold' }}>₹{selectedStudent.fee || 0}</span>
+                            </div>
+
+                            <div style={{ gridColumn: '1 / -1', marginTop: '20px' }}>
+                                <h4 style={{ color: '#333', borderBottom: '2px solid #8b5cf6', paddingBottom: '8px', marginBottom: '15px' }}>📅 Attendance Logs</h4>
+                                {attendanceLogs && attendanceLogs.length > 0 ? (
+                                    <table className="dashboard-table" style={{ width: '100%', fontSize: '13px' }}>
+                                        <thead>
+                                            <tr>
+                                                <th>Date</th>
+                                                <th>In Time</th>
+                                                <th>Out Time</th>
+                                                <th>Estimated Hours</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {attendanceLogs.map((log, i) => (
+                                                <tr key={i}>
+                                                    <td>{log.date}</td>
+                                                    <td><span className="status approved">{log.firstIn}</span></td>
+                                                    <td><span className="status error">{log.lastOut}</span></td>
+                                                    <td><strong>{log.durationMinutes} mins</strong> ({(log.durationMinutes / 60).toFixed(1)} hrs)</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                ) : (
+                                    <div style={{ padding: '15px', background: '#f8f9fa', borderRadius: '8px', textAlign: 'center', color: '#666' }}>
+                                        No attendance records found for this student.
+                                    </div>
+                                )}
                             </div>
                         </div>
                     </div>
@@ -1385,6 +1432,54 @@ const EnrollStudentPage = () => {
         amountReceived: '', paymentMode: '', installment: 'No', totalFee: ''
     });
     const [loading, setLoading] = useState(false);
+    const [photoData, setPhotoData] = useState(null);
+    const videoRef = useRef(null);
+    const canvasRef = useRef(null);
+    const [cameraActive, setCameraActive] = useState(false);
+
+    const startCamera = async () => {
+        setCameraActive(true);
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+            if (videoRef.current) {
+                videoRef.current.srcObject = stream;
+            }
+        } catch (err) {
+            console.error("Camera error:", err);
+            alert("Could not access camera");
+            setCameraActive(false);
+        }
+    };
+
+    const stopCamera = () => {
+        if (videoRef.current && videoRef.current.srcObject) {
+            videoRef.current.srcObject.getTracks().forEach(t => t.stop());
+        }
+        setCameraActive(false);
+    };
+
+    const capturePhoto = () => {
+        if (videoRef.current && canvasRef.current) {
+            const context = canvasRef.current.getContext('2d');
+            canvasRef.current.width = videoRef.current.videoWidth;
+            canvasRef.current.height = videoRef.current.videoHeight;
+            context.drawImage(videoRef.current, 0, 0, videoRef.current.videoWidth, videoRef.current.videoHeight);
+            const dataUrl = canvasRef.current.toDataURL('image/jpeg');
+            setPhotoData(dataUrl);
+            stopCamera();
+        }
+    };
+
+    const handleFileUpload = (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+                setPhotoData(reader.result);
+            };
+            reader.readAsDataURL(file);
+        }
+    };
 
     const handleInput = (e) => setFormData({ ...formData, [e.target.name]: e.target.value });
 
@@ -1439,7 +1534,8 @@ const EnrollStudentPage = () => {
                 fee: netFee,
                 dueFees,
                 amountReceivedWords: amountWords,
-                receiptNo
+                receiptNo,
+                photo: photoData
             };
             const res = await api.post('/users/enroll', payload);
 
@@ -1613,6 +1709,37 @@ const EnrollStudentPage = () => {
                         </div>
                         <div>
                             <input type="text" name="accountHolder" value={formData.accountHolder} onChange={handleInput} placeholder="Account Holder Name" style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none' }} />
+                        </div>
+                    </div>
+                    <div style={{ gridColumn: '1 / -1', borderTop: '1px solid #eee', marginTop: '15px', paddingTop: '25px' }}>
+                        <div style={{ fontWeight: 'bold', color: '#555', marginBottom: '15px' }}>Student Photo</div>
+                        <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', background: '#f8f9fa', padding: '15px', borderRadius: '8px', border: '1px solid #e0e0e0' }}>
+                            <div style={{ flex: 1, minWidth: '250px' }}>
+                                <div style={{ marginBottom: '10px', fontSize: '13px', color: '#666' }}>Option 1: Upload from Computer</div>
+                                <input type="file" accept="image/*" onChange={handleFileUpload} style={{ padding: '8px', background: 'white', border: '1px solid #ddd', borderRadius: '4px', width: '100%' }} />
+                            </div>
+                            <div style={{ flex: 1, minWidth: '250px' }}>
+                                <div style={{ marginBottom: '10px', fontSize: '13px', color: '#666' }}>Option 2: Take Live Photo</div>
+                                {!cameraActive && !photoData && (
+                                    <button onClick={startCamera} style={{ background: '#3b82f6', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer' }}>📷 Start Webcam</button>
+                                )}
+                                {cameraActive && (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                                        <video ref={videoRef} autoPlay style={{ width: '100%', maxWidth: '300px', borderRadius: '8px', background: '#000' }}></video>
+                                        <div style={{ display: 'flex', gap: '10px' }}>
+                                            <button onClick={capturePhoto} style={{ background: '#10b981', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer' }}>📸 Capture</button>
+                                            <button onClick={stopCamera} style={{ background: '#ef4444', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer' }}>Cancel</button>
+                                        </div>
+                                    </div>
+                                )}
+                                <canvas ref={canvasRef} style={{ display: 'none' }}></canvas>
+                            </div>
+                            {photoData && (
+                                <div style={{ width: '150px', textAlign: 'center' }}>
+                                    <img src={photoData} alt="Preview" style={{ width: '100px', height: '100px', objectFit: 'cover', borderRadius: '8px', border: '2px solid #8b5cf6', marginBottom: '8px' }} />
+                                    <button onClick={() => setPhotoData(null)} style={{ background: '#ef4444', color: 'white', border: 'none', padding: '4px 8px', borderRadius: '4px', fontSize: '11px', cursor: 'pointer' }}>Remove Photo</button>
+                                </div>
+                            )}
                         </div>
                     </div>
                     <div style={{ gridColumn: '1 / -1', borderTop: '1px solid #eee', marginTop: '15px', paddingTop: '25px' }}>
@@ -2204,6 +2331,406 @@ const BirthdaysPage = () => {
 };
 
 // --- MAIN APP ---
+
+const StudentProfilePage = () => {
+  const { id } = useParams();
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editForm, setEditForm] = useState({});
+  const [activeTab, setActiveTab] = useState('punches');
+  const [paymentAmount, setPaymentAmount] = useState('');
+
+  const fetchStudentData = () => {
+    api.get(`/attendance/student/${id}`)
+      .then(res => {
+        setData(res.data);
+        setEditForm(res.data.student);
+        setLoading(false);
+      })
+      .catch(err => {
+        console.error(err);
+        setLoading(false);
+      });
+  };
+
+  useEffect(() => {
+    fetchStudentData();
+
+    const handleLivePunch = (punch) => {
+      // Refresh if the punch belongs to this student
+      if (punch.userId === id || punch.fingerprint_id === id) {
+        fetchStudentData();
+      }
+    };
+
+    socket.on('live_punch', handleLivePunch);
+    return () => socket.off('live_punch', handleLivePunch);
+  }, [id]);
+
+  const handleEditChange = (e) => {
+    const { name, value } = e.target;
+    let newForm = { ...editForm, [name]: value };
+    
+    // Auto-calculate remaining due if fee or amount paid changes
+    if (name === 'fee' || name === 'amountReceived') {
+      const total = Number(newForm.fee) || 0;
+      const paid = Number(newForm.amountReceived) || 0;
+      newForm.dueFees = total - paid;
+    }
+    
+    setEditForm(newForm);
+  };
+
+  const handleSave = async () => {
+    try {
+      await api.put(`/users/${id}`, editForm);
+      setData({ ...data, student: editForm });
+      setIsEditing(false);
+    } catch (err) {
+      console.error('Failed to save profile:', err);
+      alert('Failed to save profile: ' + (err.response?.data?.error || err.message));
+    }
+  };
+
+  const handleFeePayment = async () => {
+    try {
+      const payment = Number(paymentAmount) || 0;
+      const currentPaid = Number(data.student.amountReceived) || 0;
+      const totalFee = Number(editForm.fee) || 0;
+      
+      const newPaid = currentPaid + payment;
+      const newDue = totalFee - newPaid;
+
+      const payload = { ...editForm, amountReceived: newPaid, dueFees: newDue };
+      
+      await api.put(`/users/${id}`, payload);
+      setData({ ...data, student: payload });
+      setEditForm(payload);
+      setPaymentAmount('');
+      alert('Fee payment recorded successfully!');
+    } catch (err) {
+      console.error(err);
+      alert('Failed to record payment');
+    }
+  };
+
+  const exportToExcel = () => {
+    if (!data || !data.records) return;
+    
+    // Headers
+    const headers = ["Student Name", "Date", "First In", "Last Out", "Duration"];
+    
+    const rows = data.records.map(r => {
+      const durationStr = r.durationSeconds !== undefined 
+          ? `${Math.floor(r.durationSeconds / 3600)}h ${Math.floor((r.durationSeconds % 3600) / 60)}m ${r.durationSeconds % 60}s` 
+          : `${Math.floor(r.durationMinutes/60)}h ${r.durationMinutes%60}m`;
+          
+      return [
+        `"${data.student.name}"`,
+        `"${r.date.split('-').reverse().join('/')}"`,
+        `"${r.firstIn}"`,
+        `"${r.lastOut}"`,
+        `"${durationStr}"`
+      ].join(',');
+    });
+    
+    const csvContent = [headers.join(','), ...rows].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `${data.student.name}_Attendance.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  if (loading) return <div style={{ padding: '40px', textAlign: 'center', fontSize: '18px', color: '#666' }}>Loading Student Profile...</div>;
+  if (!data) return <div style={{ padding: '40px', textAlign: 'center', fontSize: '18px', color: '#e74c3c' }}>Student Profile Not Found.</div>;
+
+  const { student, summary, records } = data;
+
+  // Format records for Recharts
+  const chartData = [...records].reverse().map(r => ({
+    date: r.date.split('-').slice(1).reverse().join('/'), // DD/MM
+    duration: r.durationMinutes || 0
+  }));
+
+  return (
+    <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '30px' }}>
+      
+      {/* Header Profile Section */}
+      <div style={{ background: 'white', borderRadius: '16px', padding: '30px', boxShadow: '0 4px 20px rgba(0,0,0,0.05)', display: 'flex', gap: '30px', alignItems: 'center', position: 'relative' }}>
+        {student.photo ? (
+          <img 
+            src={`http://${backendHost}:8080${student.photo}`} 
+            alt={student.name} 
+            style={{ width: '100px', height: '100px', borderRadius: '50%', objectFit: 'cover', border: '3px solid #8b5cf6', boxShadow: '0 4px 10px rgba(139,92,246,0.2)' }} 
+          />
+        ) : (
+          <div style={{ width: '100px', height: '100px', borderRadius: '50%', background: 'linear-gradient(135deg, #8b5cf6, #d946ef)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '40px', fontWeight: 'bold', border: '3px solid white', boxShadow: '0 4px 10px rgba(0,0,0,0.1)' }}>
+            {student.name.charAt(0).toUpperCase()}
+          </div>
+        )}
+        <div style={{ flex: 1 }}>
+          <h1 style={{ margin: '0 0 10px 0', fontSize: '28px', color: '#1f2937' }}>{student.name}</h1>
+          <div style={{ display: 'flex', gap: '20px', color: '#6b7280', fontSize: '15px', flexWrap: 'wrap' }}>
+            <div><strong style={{ color: '#374151' }}>Register No:</strong> {student.fingerprint_id}</div>
+            <div><strong style={{ color: '#374151' }}>Email:</strong> {student.email || 'N/A'}</div>
+            <div><strong style={{ color: '#374151' }}>Student Phone:</strong> {student.studentPhone || 'N/A'}</div>
+            <div><strong style={{ color: '#374151' }}>Mother Phone:</strong> {student.motherPhone || 'N/A'}</div>
+            <div><strong style={{ color: '#374151' }}>Father Phone:</strong> {student.fatherPhone || 'N/A'}</div>
+            <div><strong style={{ color: '#374151' }}>Branch:</strong> {student.branch || 'N/A'}</div>
+          </div>
+        </div>
+        <div style={{ position: 'absolute', top: '30px', right: '30px', display: 'flex', gap: '10px' }}>
+          <button 
+            onClick={() => window.print()}
+            style={{ background: '#3b82f6', border: 'none', padding: '8px 16px', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, color: 'white', transition: 'all 0.2s' }}>
+            🖨️ Print Receipt
+          </button>
+          <button 
+            onClick={() => setIsEditing(true)}
+            style={{ background: '#f3f4f6', border: 'none', padding: '8px 16px', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, color: '#4b5563', transition: 'all 0.2s' }}>
+            ✏️ Edit Profile
+          </button>
+        </div>
+      </div>
+      
+      {/* Hidden receipt for printing */}
+      <ReceiptPrintView student={student} />
+
+      {/* Edit Modal */}
+      {isEditing && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
+          <div style={{ background: 'white', padding: '30px', borderRadius: '16px', width: '600px', boxShadow: '0 10px 25px rgba(0,0,0,0.1)' }}>
+            <h2 style={{ marginTop: 0, marginBottom: '20px', fontSize: '22px', color: '#1f2937' }}>Edit Profile</h2>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', marginBottom: '5px', color: '#4b5563' }}>Full Name</label>
+                <input name="name" value={editForm.name || ''} onChange={handleEditChange} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #d1d5db', outline: 'none' }} />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', marginBottom: '5px', color: '#4b5563' }}>Email</label>
+                <input name="email" value={editForm.email || ''} onChange={handleEditChange} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #d1d5db', outline: 'none' }} />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', marginBottom: '5px', color: '#4b5563' }}>Student Phone</label>
+                <input name="studentPhone" value={editForm.studentPhone || ''} onChange={handleEditChange} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #d1d5db', outline: 'none' }} />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', marginBottom: '5px', color: '#4b5563' }}>Mother Phone</label>
+                <input name="motherPhone" value={editForm.motherPhone || ''} onChange={handleEditChange} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #d1d5db', outline: 'none' }} />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', marginBottom: '5px', color: '#4b5563' }}>Father Phone</label>
+                <input name="fatherPhone" value={editForm.fatherPhone || ''} onChange={handleEditChange} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #d1d5db', outline: 'none' }} />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', marginBottom: '5px', color: '#4b5563' }}>Branch</label>
+                <input name="branch" value={editForm.branch || ''} onChange={handleEditChange} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #d1d5db', outline: 'none' }} />
+              </div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '25px' }}>
+              <button onClick={() => setIsEditing(false)} style={{ background: 'transparent', border: '1px solid #d1d5db', padding: '10px 20px', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, color: '#4b5563' }}>Cancel</button>
+              <button onClick={handleSave} style={{ background: '#8b5cf6', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '8px', cursor: 'pointer', fontWeight: 600 }}>Save Changes</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: '30px', alignItems: 'flex-start' }}>
+        {/* Quick Links Sidebar */}
+        <div style={{ width: '240px', display: 'flex', flexDirection: 'column', gap: '15px', flexShrink: 0 }}>
+          <div style={{ background: '#f3e8ff', color: '#9333ea', padding: '6px 16px', borderRadius: '20px', display: 'inline-block', fontWeight: 'bold', fontSize: '14px', alignSelf: 'flex-start', marginBottom: '5px' }}>Quick Links</div>
+
+          <button onClick={() => setActiveTab('punches')} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 16px', background: activeTab === 'punches' ? '#f3e8ff' : 'white', border: '1px solid #c084fc', borderRadius: '8px', color: '#a855f7', fontWeight: '600', fontSize: '15px', cursor: 'pointer', transition: 'all 0.2s' }}>
+            <span style={{ fontSize: '18px' }}>👆</span> Punches
+          </button>
+          
+          <button onClick={() => setActiveTab('fees')} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', background: activeTab === 'fees' ? '#fee2e2' : 'white', border: '1px solid #fca5a5', borderRadius: '8px', color: '#ef4444', fontWeight: '600', fontSize: '15px', cursor: 'pointer', transition: 'all 0.2s' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}><span style={{ fontSize: '18px' }}>₹</span> Fees</div>
+            <span style={{ fontSize: '12px' }}>▼</span>
+          </button>
+
+          <button onClick={() => setActiveTab('punches')} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 16px', background: 'white', border: '1px solid #86efac', borderRadius: '8px', color: '#22c55e', fontWeight: '600', fontSize: '15px', cursor: 'pointer', transition: 'all 0.2s' }}>
+            <span style={{ fontSize: '18px' }}>🕒</span> Attendance
+          </button>
+
+          <button onClick={() => window.print()} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 16px', background: 'white', border: '1px solid #7dd3fc', borderRadius: '8px', color: '#0ea5e9', fontWeight: '600', fontSize: '15px', cursor: 'pointer', transition: 'all 0.2s' }}>
+            <span style={{ fontSize: '18px' }}>🖨️</span> Admission Form
+          </button>
+
+          <button onClick={() => window.print()} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 16px', background: 'white', border: '1px solid #fcd34d', borderRadius: '8px', color: '#f59e0b', fontWeight: '600', fontSize: '15px', cursor: 'pointer', transition: 'all 0.2s' }}>
+            <span style={{ fontSize: '18px' }}>🪪</span> Icard
+          </button>
+        </div>
+
+        {/* Main Content Area */}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '30px', minWidth: 0 }}>
+          
+          {activeTab === 'punches' && (
+            <>
+          {/* Stats Summary */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '20px' }}>
+            {[
+              { label: 'Present Days (This Month)', value: summary.daysPresentThisMonth, color: '#22c55e', icon: '📅' },
+              { label: 'Absent Days (This Month)', value: summary.absentDaysThisMonth || 0, color: '#ef4444', icon: '❌' },
+              { label: 'Monthly Attendance %', value: `${summary.monthlyPercentage}%`, color: '#3b82f6', icon: '📊' },
+              { label: 'Total Hours (All Time)', value: summary.totalHours, color: '#8b5cf6', icon: '⏱️' }
+            ].map((stat, i) => (
+              <div key={i} style={{ background: 'white', padding: '25px', borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.05)', display: 'flex', alignItems: 'center', gap: '20px' }}>
+                <div style={{ fontSize: '32px', background: `${stat.color}15`, width: '60px', height: '60px', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: stat.color }}>{stat.icon}</div>
+                <div>
+                  <div style={{ fontSize: '13px', color: '#6b7280', textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.5px', marginBottom: '4px' }}>{stat.label}</div>
+                  <div style={{ fontSize: '24px', fontWeight: 800, color: '#1f2937' }}>{stat.value}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Graph and Table Section */}
+          <div style={{ display: 'grid', gridTemplateColumns: '3fr 2fr', gap: '30px' }}>
+            
+            {/* Recharts Graph */}
+            <div style={{ background: 'white', padding: '25px', borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.05)' }}>
+              <h3 style={{ margin: '0 0 20px 0', fontSize: '18px', color: '#1f2937' }}>Daily Classroom Duration (Minutes)</h3>
+              {chartData.length > 0 ? (
+                <div style={{ height: '350px', width: '100%' }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={chartData} margin={{ top: 20, right: 30, left: 0, bottom: 5 }}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
+                      <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{fill: '#6b7280', fontSize: 12}} dy={10} />
+                      <YAxis axisLine={false} tickLine={false} tick={{fill: '#6b7280', fontSize: 12}} dx={-10} />
+                      <Tooltip cursor={{fill: '#f3f4f6'}} contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 15px rgba(0,0,0,0.1)' }} />
+                      <Bar dataKey="duration" fill="#8b5cf6" radius={[6, 6, 0, 0]} barSize={40} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : (
+                <div style={{ height: '350px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9ca3af', background: '#f9fafb', borderRadius: '12px' }}>
+                  No attendance data available for chart.
+                </div>
+              )}
+            </div>
+
+            {/* Detailed Logs Table */}
+            <div style={{ background: 'white', padding: '25px', borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.05)', display: 'flex', flexDirection: 'column' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                <h3 style={{ margin: 0, fontSize: '18px', color: '#1f2937' }}>Recent Attendance Logs</h3>
+                <button onClick={exportToExcel} style={{ background: '#10b981', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px' }}>
+                  <span>📊</span> Export Excel
+                </button>
+              </div>
+              <div style={{ flex: 1, overflowY: 'auto', maxHeight: '350px', paddingRight: '10px' }}>
+                {records.length > 0 ? (
+                  <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '14px' }}>
+                    <thead>
+                      <tr style={{ color: '#6b7280', borderBottom: '2px solid #f3f4f6' }}>
+                        <th style={{ padding: '12px 8px', fontWeight: 600 }}>Date</th>
+                        <th style={{ padding: '12px 8px', fontWeight: 600 }}>First In</th>
+                        <th style={{ padding: '12px 8px', fontWeight: 600 }}>Last Out</th>
+                        <th style={{ padding: '12px 8px', fontWeight: 600 }}>Duration</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {records.map((r, i) => (
+                        <tr key={i} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                          <td style={{ padding: '14px 8px', color: '#1f2937', fontWeight: 500 }}>{r.date.split('-').reverse().join('/')}</td>
+                          <td style={{ padding: '14px 8px', color: '#10b981', fontWeight: 600 }}>{r.firstIn}</td>
+                          <td style={{ padding: '14px 8px', color: '#f59e0b', fontWeight: 600 }}>{r.lastOut}</td>
+                          <td style={{ padding: '14px 8px', color: '#6366f1', fontWeight: 600 }}>
+                            {r.durationSeconds !== undefined 
+                              ? `${Math.floor(r.durationSeconds / 3600)}h ${Math.floor((r.durationSeconds % 3600) / 60)}m ${r.durationSeconds % 60}s` 
+                              : `${Math.floor(r.durationMinutes/60)}h ${r.durationMinutes%60}m`}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : (
+                  <div style={{ padding: '40px 0', textAlign: 'center', color: '#9ca3af' }}>No recent logs found.</div>
+                )}
+              </div>
+            </div>
+          </div>
+            </>
+          )}
+
+          {activeTab === 'fees' && (
+            <div style={{ background: 'white', padding: '30px', borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.05)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px' }}>
+                <h2 style={{ margin: 0, fontSize: '22px', color: '#1f2937' }}>Fee Management</h2>
+                <button 
+                  onClick={() => window.print()}
+                  style={{ background: '#3b82f6', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span>🖨️</span> Print Fee Receipt
+                </button>
+              </div>
+
+              {/* Fee Info Cards */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px', marginBottom: '30px' }}>
+                <div style={{ padding: '20px', borderRadius: '12px', background: '#eff6ff', border: '1px solid #bfdbfe' }}>
+                  <div style={{ fontSize: '14px', color: '#3b82f6', fontWeight: 600, marginBottom: '5px' }}>Total Fees</div>
+                  <div style={{ fontSize: '28px', fontWeight: 800, color: '#1e3a8a' }}>₹ {student.fee || 0}</div>
+                </div>
+                <div style={{ padding: '20px', borderRadius: '12px', background: '#dcfce7', border: '1px solid #bbf7d0' }}>
+                  <div style={{ fontSize: '14px', color: '#22c55e', fontWeight: 600, marginBottom: '5px' }}>Fees Paid</div>
+                  <div style={{ fontSize: '28px', fontWeight: 800, color: '#166534' }}>₹ {student.amountReceived || 0}</div>
+                </div>
+                <div style={{ padding: '20px', borderRadius: '12px', background: '#fee2e2', border: '1px solid #fecaca' }}>
+                  <div style={{ fontSize: '14px', color: '#ef4444', fontWeight: 600, marginBottom: '5px' }}>Remaining Due</div>
+                  <div style={{ fontSize: '28px', fontWeight: 800, color: '#991b1b' }}>₹ {student.dueFees !== undefined ? student.dueFees : ((student.fee || 0) - (student.amountReceived || 0))}</div>
+                </div>
+              </div>
+
+              {/* Pay Fee Form */}
+              <div style={{ padding: '25px', border: '1px solid #e5e7eb', borderRadius: '12px', background: '#f9fafb' }}>
+                <h3 style={{ margin: '0 0 20px 0', fontSize: '18px', color: '#374151' }}>Record New Payment</h3>
+                <div style={{ display: 'flex', gap: '20px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                  <div style={{ flex: '1 1 200px' }}>
+                    <label style={{ display: 'block', fontSize: '13px', marginBottom: '8px', color: '#4b5563', fontWeight: '600' }}>Total Fee Amount</label>
+                    <input type="number" name="fee" value={editForm.fee || ''} onChange={handleEditChange} style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #d1d5db', outline: 'none' }} />
+                  </div>
+                  <div style={{ flex: '1 1 200px' }}>
+                    <label style={{ display: 'block', fontSize: '13px', marginBottom: '8px', color: '#4b5563', fontWeight: '600' }}>Payment Amount (₹)</label>
+                    <input type="number" value={paymentAmount} onChange={(e) => setPaymentAmount(e.target.value)} placeholder="e.g. 5000" style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #d1d5db', outline: 'none' }} />
+                  </div>
+                  <div style={{ flex: '1 1 200px' }}>
+                    <label style={{ display: 'block', fontSize: '13px', marginBottom: '8px', color: '#4b5563', fontWeight: '600' }}>Payment Mode</label>
+                    <select name="paymentMode" value={editForm.paymentMode || ''} onChange={handleEditChange} style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #d1d5db', outline: 'none', background: 'white' }}>
+                      <option value="">Select Mode</option>
+                      <option value="Cash">Cash</option>
+                      <option value="Online">Online</option>
+                      <option value="Cheque">Cheque</option>
+                    </select>
+                  </div>
+                  <div style={{ flex: '1 1 200px' }}>
+                    <label style={{ display: 'block', fontSize: '13px', marginBottom: '8px', color: '#4b5563', fontWeight: '600' }}>Cheque/Txn No.</label>
+                    <input type="text" name="chequeNo" value={editForm.chequeNo || ''} onChange={handleEditChange} placeholder="e.g. TXN123456" style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #d1d5db', outline: 'none' }} />
+                  </div>
+                  <div style={{ flex: '1 1 200px' }}>
+                    <label style={{ display: 'block', fontSize: '13px', marginBottom: '8px', color: '#4b5563', fontWeight: '600' }}>New Remaining Due</label>
+                    <div style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #d1d5db', background: '#f3f4f6', color: '#4b5563', fontWeight: '600' }}>
+                      { (Number(editForm.fee) || 0) - ((Number(student.amountReceived) || 0) + (Number(paymentAmount) || 0)) }
+                    </div>
+                  </div>
+                  <button onClick={handleFeePayment} style={{ background: '#10b981', color: 'white', border: 'none', padding: '12px 24px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', transition: 'background 0.2s', flex: '1 1 200px' }}>
+                    Confirm Payment
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+        </div>
+      </div>
+    </div>
+  );
+};
+
+
 function App() {
     const [token, setToken] = useState(localStorage.getItem('token'));
     let initialUser = null;
@@ -2231,6 +2758,7 @@ function App() {
                         <Route path="/devices" element={<ProtectedRoute><Layout logout={logout} user={user}><DevicesPage /></Layout></ProtectedRoute>} />
                         <Route path="/simulator" element={<ProtectedRoute><Layout logout={logout} user={user}><Simulator /></Layout></ProtectedRoute>} />
                         <Route path="/enquiries/new" element={<ProtectedRoute><Layout logout={logout} user={user}><NewEnquiryPage /></Layout></ProtectedRoute>} />
+                        <Route path="/student/:id" element={<ProtectedRoute><Layout logout={logout} user={user}><StudentProfilePage /></Layout></ProtectedRoute>} />
                         <Route path="*" element={<Navigate to="/" replace />} />
                     </Routes>
                 )}
