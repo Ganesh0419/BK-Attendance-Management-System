@@ -4,11 +4,24 @@ import ReceiptPrintView from './ReceiptPrintView';
 import { io } from 'socket.io-client';
 import api from './api';
 import logo from './logo.jpeg';
+import * as XLSX from 'xlsx';
+import jsPDF from 'jspdf';
+import 'jspdf-autotable';
 
-const backendHost = 'localhost';
+const backendHost = '192.168.0.102';
 const socket = io(`http://${backendHost}:8080`);
 const AuthContext = React.createContext(null);
 
+const getEstimatedHrs = (r) => {
+    if (!r.firstTime) return '--';
+    const start = new Date(r.firstTime);
+    const end = r.lastTime ? new Date(r.lastTime) : new Date();
+    const diffMs = end.getTime() - start.getTime();
+    if (diffMs < 0) return '--';
+    const hrs = Math.floor(diffMs / 3600000);
+    const mins = Math.floor((diffMs % 3600000) / 60000);
+    return `${hrs}h ${mins}m`;
+};
 // --- LOGIN PAGE ---
 const Login = () => {
     const [email, setEmail] = useState('');
@@ -247,7 +260,7 @@ const Dashboard = () => {
                 const punchTime = formatTime(data.timestamp);
 
                 if (existingIndex > -1) {
-                    updated[existingIndex] = { ...updated[existingIndex], outTime: punchTime };
+                    updated[existingIndex] = { ...updated[existingIndex], outTime: punchTime, lastTime: data.timestamp };
                     // Move to top
                     const item = updated.splice(existingIndex, 1)[0];
                     updated.unshift(item);
@@ -258,7 +271,9 @@ const Dashboard = () => {
                         photo: data.userPhoto || null,
                         inTime: punchTime,
                         outTime: '--:-- --',
-                        status: 'Present'
+                        status: data.status || 'Present',
+                        firstTime: data.timestamp,
+                        lastTime: null
                     });
                 }
                 return updated;
@@ -323,7 +338,7 @@ const Dashboard = () => {
             photo = user ? user.photo : null;
         }
         if (photo) {
-            if (photo.startsWith('http')) return photo;
+            if (photo.startsWith('http') || photo.startsWith('data:')) return photo;
             return `http://${backendHost}:8080${photo}`;
         }
         return null;
@@ -362,7 +377,6 @@ const Dashboard = () => {
     };
 
     const upcomingBirthdays = getUpcomingBirthdays();
-
 
     return (
         <div>
@@ -534,18 +548,19 @@ const Dashboard = () => {
                                 <th>Role</th>
                                 <th>In Time</th>
                                 <th>Out Time</th>
+                                <th>Estimated Hrs</th>
                                 <th>Status</th>
                             </tr>
                         </thead>
                         <tbody id="attendanceTable">
                             {recent.length === 0 ? (
-                                <tr><td colSpan="5" style={{ textAlign: 'center', padding: '40px', color: '#888' }}>No attendance records yet today. Waiting for machine sync...</td></tr>
+                                <tr><td colSpan="6" style={{ textAlign: 'center', padding: '40px', color: '#888' }}>No attendance records yet today. Waiting for machine sync...</td></tr>
                             ) : recent.map((r, i) => (
                                 <tr key={i}>
                                     <td>
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                                             {r.photo ? (
-                                                <img src={r.photo.startsWith('http') ? r.photo : `http://${backendHost}:8080${r.photo}`} alt="Face" style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover' }} />
+                                                <img src={(r.photo.startsWith('http') || r.photo.startsWith('data:')) ? r.photo : `http://${backendHost}:8080${r.photo}`} alt="Face" style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover' }} />
                                             ) : (
                                                 <div className="avatar" style={{ background: '#bdc3c7' }}>{r.name.charAt(0)}</div>
                                             )}
@@ -555,6 +570,7 @@ const Dashboard = () => {
                                     <td style={{ textTransform: 'capitalize' }}>{r.role}</td>
                                     <td>{r.inTime}</td>
                                     <td>{r.outTime}</td>
+                                    <td>{getEstimatedHrs(r)}</td>
                                     <td><span className="status present">{r.status}</span></td>
                                 </tr>
                             ))}
@@ -1135,6 +1151,54 @@ const TeachersPage = () => {
     const [salary, setSalary] = useState('');
     const [dailySalary, setDailySalary] = useState('');
     const [profession, setProfession] = useState('');
+    const [photoData, setPhotoData] = useState(null);
+    const videoRef = useRef(null);
+    const canvasRef = useRef(null);
+    const [cameraActive, setCameraActive] = useState(false);
+
+    const startCamera = async () => {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+            setCameraActive(true);
+            setTimeout(() => {
+                if (videoRef.current) {
+                    videoRef.current.srcObject = stream;
+                }
+            }, 100);
+        } catch (err) {
+            alert("Error accessing camera: " + err.message);
+        }
+    };
+
+    const stopCamera = () => {
+        if (videoRef.current && videoRef.current.srcObject) {
+            videoRef.current.srcObject.getTracks().forEach(track => track.stop());
+        }
+        setCameraActive(false);
+    };
+
+    const capturePhoto = () => {
+        if (videoRef.current && canvasRef.current) {
+            const context = canvasRef.current.getContext('2d');
+            canvasRef.current.width = videoRef.current.videoWidth;
+            canvasRef.current.height = videoRef.current.videoHeight;
+            context.drawImage(videoRef.current, 0, 0);
+            const dataUrl = canvasRef.current.toDataURL('image/jpeg');
+            setPhotoData(dataUrl);
+            stopCamera();
+        }
+    };
+
+    const handleFileUpload = (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                setPhotoData(event.target.result);
+            };
+            reader.readAsDataURL(file);
+        }
+    };
 
     const [startHour, setStartHour] = useState('09');
     const [startMin, setStartMin] = useState('00');
@@ -1203,6 +1267,13 @@ const TeachersPage = () => {
 
     useEffect(() => {
         fetchTeachers();
+        const handleLivePunch = () => {
+            fetchTeachers();
+        };
+        socket.on('live_punch', handleLivePunch);
+        return () => {
+            socket.off('live_punch', handleLivePunch);
+        };
     }, []);
 
     const handleSubmit = async (e) => {
@@ -1224,7 +1295,8 @@ const TeachersPage = () => {
                 batch: finalBatch,
                 studentContact: phone,
                 aadhar,
-                gender
+                gender,
+                photo: photoData
             };
             if (editId) {
                 await api.put(`/users/${editId}`, payload);
@@ -1232,7 +1304,8 @@ const TeachersPage = () => {
                 await api.post('/users/enroll', payload);
             }
             setShowModal(false);
-            setName(''); setEmail(''); setFingerprintId(''); setExperience(''); setSubject(''); setTiming(''); setSalary(''); setDailySalary(''); setProfession(''); setBatch('11th PCMB'); setOtherBatch('');
+            stopCamera();
+            setName(''); setEmail(''); setFingerprintId(''); setExperience(''); setSubject(''); setTiming(''); setSalary(''); setDailySalary(''); setProfession(''); setBatch('11th PCMB'); setOtherBatch(''); setPhotoData(null);
             setStartHour('09'); setStartMin('00'); setStartAmpm('AM'); setEndHour('06'); setEndMin('00'); setEndAmpm('PM');
             setPhone(''); setAadhar(''); setGender('Male');
             fetchTeachers();
@@ -1264,6 +1337,7 @@ const TeachersPage = () => {
         setAadhar(t.aadhar || '');
         setGender(t.gender || 'Male');
         setBatch(t.batch || '11th PCMB');
+        setPhotoData(t.photo || null);
         setShowModal(true);
     };
 
@@ -1340,32 +1414,63 @@ const TeachersPage = () => {
                         setEditId(null);
                         setName(''); setEmail(''); setFingerprintId(''); setExperience(''); setSubject(''); setTiming(''); setSalary(''); setDailySalary(''); setProfession(''); setBatch('11th PCMB'); setOtherBatch('');
                         setStartHour('09'); setStartMin('00'); setStartAmpm('AM'); setEndHour('06'); setEndMin('00'); setEndAmpm('PM');
-                        setPhone(''); setAadhar(''); setGender('Male');
+                        setPhone(''); setAadhar(''); setGender('Male'); setPhotoData(null);
                         setShowModal(true);
                     }}>Add Teacher/Staff</button>
-                    <button className="btn btn-warning">Run Payroll</button>
                 </div>
             </div>
-            <table className="dashboard-table">
+            <div style={{ overflowX: 'auto', width: '100%' }}>
+                <table className="dashboard-table">
                 <thead>
-                    <tr>
+                    <tr style={{ whiteSpace: 'nowrap' }}>
                         <th>Name</th>
                         <th>Role</th>
                         <th>Subject/Profession</th>
+                        <th>In Time</th>
+                        <th>Out Time</th>
+                        <th>Estimated Hrs</th>
                         <th>Base Salary</th>
-                        <th>Today's Pay</th>
+                        <th>Biometric ID</th>
+                        <th>Payroll</th>
                         <th>Actions</th>
                     </tr >
                 </thead >
                 <tbody>
                     {teachers.map(t => (
-                        <tr key={t.id}>
-                            <td><div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}><div className="avatar">{t.name.charAt(0)}</div> {t.name}</div></td>
+                        <tr key={t.id} style={{ whiteSpace: 'nowrap' }}>
+                            <td>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                    {t.photo ? (
+                                        <img src={(t.photo.startsWith('http') || t.photo.startsWith('data:')) ? t.photo : `http://${backendHost}:8080${t.photo}`} alt="Face" style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover' }} />
+                                    ) : (
+                                        <div className="avatar">{t.name.charAt(0)}</div>
+                                    )}
+                                    <Link to={`/teacher/${t.fingerprint_id}`} style={{ fontWeight: '600', color: '#3b82f6', textDecoration: 'none' }}>
+                                        {t.name}
+                                    </Link>
+                                </div>
+                            </td>
                             <td style={{ textTransform: 'capitalize' }}>{t.role}</td>
                             <td>{t.role === 'teacher' ? `${t.subject || 'N/A'} ${t.batch ? `(${t.batch})` : ''}` : (t.profession || 'N/A')}</td>
+                            <td>{t.inTime}</td>
+                            <td>{t.outTime}</td>
+                            <td>{getEstimatedHrs(t)}</td>
                             <td>₹ {t.salary ? t.salary.toLocaleString('en-IN') : '0'}</td>
                             <td><code style={{ background: '#f0f2f5', padding: '4px 8px', borderRadius: '4px' }}>{t.fingerprint_id}</code></td>
-                            <td><button className="btn btn-warning" style={{ padding: '4px 10px' }} onClick={() => setSelectedTeacher(t)}>💰 Calculate Pay</button></td>
+                            <td>
+                                {(t.role || '').toLowerCase() === 'teacher' ? (
+                                    <button className="btn btn-warning" style={{ padding: '4px 10px' }} onClick={() => setSelectedTeacher(t)}>💰 Calculate Pay</button>
+                                ) : (
+                                    <span style={{ color: '#888', fontSize: '13px' }}>N/A (Staff)</span>
+                                )}
+                            </td>
+                            <td>
+                                <div style={{ display: 'flex', gap: '5px' }}>
+                                    <Link to={`/teacher/${t.fingerprint_id}`} className="btn btn-primary" style={{ padding: '4px 10px', fontSize: '12px', background: '#3b82f6', borderColor: '#3b82f6', textDecoration: 'none', color: 'white' }}>👁️ View</Link>
+                                    <button className="btn btn-primary" style={{ padding: '4px 10px', fontSize: '12px', background: '#6366f1', borderColor: '#6366f1' }} onClick={() => handleEdit(t)}>✏️ Edit</button>
+                                    <button className="btn btn-danger" style={{ padding: '4px 10px', fontSize: '12px' }} onClick={() => handleDelete(t.fingerprint_id || t.id, t.name)}>🗑️ Delete</button>
+                                </div>
+                            </td>
                         </tr >
                     ))}
                     {
@@ -1377,10 +1482,11 @@ const TeachersPage = () => {
                     }
                 </tbody >
             </table >
+            </div>
 
             {showModal && (
-                <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 999 }}>
-                    <div style={{ background: 'white', padding: '30px', borderRadius: '12px', width: '450px', boxShadow: '0 4px 20px rgba(0,0,0,0.2)' }}>
+                <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 999, padding: '20px' }}>
+                    <div style={{ background: 'white', padding: '30px', borderRadius: '12px', width: '500px', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 4px 20px rgba(0,0,0,0.2)' }}>
                         <h3 style={{ marginTop: 0, marginBottom: '15px' }}>{editId ? '✏️ Edit Member' : '👤 Add New Member'}</h3>
                         <form onSubmit={handleSubmit}>
                             <div style={{ display: 'flex', gap: '10px', marginBottom: '15px' }}>
@@ -1636,8 +1742,40 @@ const TeachersPage = () => {
                                 </>
                             )}
 
+                            <div style={{ background: '#f8f9fa', padding: '15px', borderRadius: '8px', marginBottom: '20px', border: '1px solid #ddd', boxSizing: 'border-box' }}>
+                                <h4 style={{ margin: '0 0 12px 0', fontSize: '13px', color: '#555', textTransform: 'uppercase' }}>Member Photo</h4>
+                                <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
+                                    <div style={{ flex: 1, minWidth: '200px' }}>
+                                        <div style={{ marginBottom: '10px', fontSize: '13px', color: '#666' }}>Option 1: Upload from Computer</div>
+                                        <input type="file" accept="image/*" onChange={handleFileUpload} style={{ padding: '8px', background: 'white', border: '1px solid #ddd', borderRadius: '4px', width: '100%' }} />
+                                    </div>
+                                    <div style={{ flex: 1, minWidth: '200px' }}>
+                                        <div style={{ marginBottom: '10px', fontSize: '13px', color: '#666' }}>Option 2: Take Live Photo</div>
+                                        {!cameraActive && !photoData && (
+                                            <button type="button" onClick={startCamera} style={{ background: '#3b82f6', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer' }}>📷 Start Webcam</button>
+                                        )}
+                                        {cameraActive && (
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                                                <video ref={videoRef} autoPlay style={{ width: '100%', maxWidth: '250px', borderRadius: '8px', background: '#000' }}></video>
+                                                <div style={{ display: 'flex', gap: '10px' }}>
+                                                    <button type="button" onClick={capturePhoto} style={{ background: '#10b981', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer' }}>📸 Capture</button>
+                                                    <button type="button" onClick={stopCamera} style={{ background: '#ef4444', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer' }}>Cancel</button>
+                                                </div>
+                                            </div>
+                                        )}
+                                        <canvas ref={canvasRef} style={{ display: 'none' }}></canvas>
+                                    </div>
+                                    {photoData && (
+                                        <div style={{ width: '120px', textAlign: 'center' }}>
+                                            <img src={photoData} alt="Preview" style={{ width: '100px', height: '100px', objectFit: 'cover', borderRadius: '8px', border: '2px solid #8b5cf6', marginBottom: '8px' }} />
+                                            <button type="button" onClick={() => setPhotoData(null)} style={{ background: '#ef4444', color: 'white', border: 'none', padding: '4px 8px', borderRadius: '4px', fontSize: '11px', cursor: 'pointer' }}>Remove</button>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
                             <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '10px' }}>
-                                <button type="button" className="btn" style={{ background: '#eee', color: '#333' }} onClick={() => setShowModal(false)}>Cancel</button>
+                                <button type="button" className="btn" style={{ background: '#eee', color: '#333' }} onClick={() => { setShowModal(false); stopCamera(); setPhotoData(null); }}>Cancel</button>
                                 <button type="submit" className="btn btn-primary">Save Member</button>
                             </div>
                         </form >
@@ -2358,7 +2496,7 @@ const DevicesPage = () => {
             photo = user ? user.photo : null;
         }
         if (photo) {
-            if (photo.startsWith('http')) return photo;
+            if (photo.startsWith('http') || photo.startsWith('data:')) return photo;
             return `http://${backendHost}:8080${photo}`;
         }
         return null;
@@ -2864,6 +3002,336 @@ const BirthdaysPage = () => {
 
 // --- MAIN APP ---
 
+const TeacherProfilePage = () => {
+    const { id } = useParams();
+    const [data, setData] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [activeTab, setActiveTab] = useState('subjects');
+    const [filterMonth, setFilterMonth] = useState(new Date().getMonth() + 1);
+    const [filterYear, setFilterYear] = useState(new Date().getFullYear());
+    const [exportMenuOpen, setExportMenuOpen] = useState(false);
+
+    const handleExport = (format) => {
+        if (!data || !data.records || data.records.length === 0) return;
+        
+        const exportData = data.records.map(r => ({
+            "Date": r.date,
+            "In / Out": r.firstIn !== '--:--' ? `${r.firstIn} / ${r.lastOut}` : '--:-- / --:--',
+            "Punches": r.totalEntries || 0,
+            "Total Hours": r.durationMinutes ? `${Math.floor(r.durationMinutes / 60)}h ${r.durationMinutes % 60}m` : '0h 0m',
+            "Status": r.status
+        }));
+
+        const tName = (teacher && teacher.name) ? teacher.name : 'User';
+
+        if (format === 'excel') {
+            const worksheet = XLSX.utils.json_to_sheet(exportData);
+            const workbook = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(workbook, worksheet, "Punches");
+            XLSX.writeFile(workbook, `${tName}_Punches_${filterMonth}_${filterYear}.xlsx`);
+        } else if (format === 'csv') {
+            const worksheet = XLSX.utils.json_to_sheet(exportData);
+            const csvOutput = XLSX.utils.sheet_to_csv(worksheet);
+            const blob = new Blob([csvOutput], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement("a");
+            const url = URL.createObjectURL(blob);
+            link.setAttribute("href", url);
+            link.setAttribute("download", `${tName}_Punches_${filterMonth}_${filterYear}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        } else if (format === 'pdf') {
+            const doc = new jsPDF();
+            doc.text(`${tName} - Punches (${filterMonth}/${filterYear})`, 14, 15);
+            doc.autoTable({
+                head: [['Date', 'In / Out', 'Punches', 'Total Hours', 'Status']],
+                body: exportData.map(r => [r['Date'], r['In / Out'], r['Punches'], r['Total Hours'], r['Status']]),
+                startY: 20
+            });
+            doc.save(`${tName}_Punches_${filterMonth}_${filterYear}.pdf`);
+        }
+        setExportMenuOpen(false);
+    };
+
+    const fetchTeacherData = (month = filterMonth, year = filterYear) => {
+        api.get(`/attendance/student/${id}?month=${month}&year=${year}`) // This endpoint works for any user
+            .then(res => {
+                setData(res.data);
+                setLoading(false);
+            })
+            .catch(err => {
+                console.error(err);
+                setLoading(false);
+            });
+    };
+
+    useEffect(() => {
+        fetchTeacherData();
+
+        const handleLivePunch = (punch) => {
+            if (String(punch.userId) === String(id) || String(punch.fingerprint_id) === String(id)) {
+                fetchTeacherData();
+            }
+        };
+
+        socket.on('live_punch', handleLivePunch);
+        return () => socket.off('live_punch', handleLivePunch);
+    }, [id]);
+
+    if (loading) return <div style={{ padding: '40px', textAlign: 'center', fontSize: '18px', color: '#666' }}>Loading Profile...</div>;
+    if (!data || !data.student) return <div style={{ padding: '40px', textAlign: 'center', fontSize: '18px', color: '#e74c3c' }}>Profile Not Found.</div>;
+
+    const teacher = data.student;
+
+    return (
+        <div style={{ padding: '20px', maxWidth: '1200px', margin: '0 auto', fontFamily: '"Inter", sans-serif' }}>
+            <div style={{ display: 'flex', gap: '25px', alignItems: 'flex-start' }}>
+                {/* Left Panel */}
+                <div style={{ flex: '0 0 320px', background: 'white', borderRadius: '12px', padding: '25px', boxShadow: '0 4px 15px rgba(0,0,0,0.05)' }}>
+                    <div style={{ display: 'inline-block', background: '#f3e8ff', color: '#a855f7', padding: '6px 14px', borderRadius: '20px', fontSize: '14px', fontWeight: '600', marginBottom: '25px' }}>
+                        👤 {teacher.role === 'staff' ? 'Staff Profile' : 'Teacher Profile'}
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '20px', marginBottom: '30px', alignItems: 'center' }}>
+                        {teacher.photo ? (
+                            <img src={(teacher.photo.startsWith('http') || teacher.photo.startsWith('data:')) ? teacher.photo : `http://${backendHost}:8080${teacher.photo}`} alt="Profile" style={{ width: '80px', height: '80px', borderRadius: '50%', objectFit: 'cover', border: '3px solid #e2e8f0' }} />
+                        ) : (
+                            <div style={{ width: '80px', height: '80px', borderRadius: '50%', background: '#dcfce7', color: '#22c55e', display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '32px', fontWeight: 'bold' }}>
+                                {teacher.name.substring(0, 2).toUpperCase()}
+                            </div>
+                        )}
+                        <div>
+                            <div style={{ fontSize: '14px', color: '#64748b' }}>Full Name:</div>
+                            <div style={{ fontSize: '18px', fontWeight: '600', color: '#1e293b' }}>{teacher.name}</div>
+                        </div>
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '15px', color: '#475569', fontSize: '14px' }}>
+                        <div><strong>Email:</strong> {teacher.email || 'N/A'}</div>
+                        <div><strong>Telephone:</strong> {teacher.studentContact || teacher.phone || 'N/A'}</div>
+                        <div><strong>Biometric Id:</strong> {teacher.fingerprint_id}</div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <strong>Status:</strong> 
+                            <span style={{ background: '#dcfce7', color: '#16a34a', padding: '4px 12px', borderRadius: '12px', fontSize: '12px', fontWeight: '600' }}>Active</span>
+                        </div>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '10px', marginTop: '30px' }}>
+                        <button style={{ flex: 1, background: '#8b5cf6', color: 'white', border: 'none', padding: '10px', borderRadius: '8px', fontWeight: '600', cursor: 'pointer' }}>☁️ Upload</button>
+                        <button style={{ flex: 1, background: '#fca5a5', color: 'white', border: 'none', padding: '10px', borderRadius: '8px', fontWeight: '600', cursor: 'pointer' }}>🗑️ Delete</button>
+                    </div>
+
+                    <div style={{ marginTop: '35px' }}>
+                        <div style={{ display: 'inline-block', background: '#f3e8ff', color: '#8b5cf6', padding: '6px 16px', borderRadius: '20px', fontWeight: '600', marginBottom: '15px', fontSize: '14px' }}>
+                            Quick Links
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                            <button onClick={() => setActiveTab('device')} style={{ background: 'white', color: '#8b5cf6', border: '1px solid #8b5cf6', padding: '10px', borderRadius: '8px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '14px' }}>
+                                <span style={{ fontSize: '16px' }}>👆</span> Punches
+                            </button>
+                            <button style={{ background: 'white', color: '#64748b', border: '1px solid #cbd5e1', padding: '10px', borderRadius: '8px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '14px' }}>
+                                <span style={{ fontSize: '16px' }}>☑️</span> Lectures
+                            </button>
+                            <button style={{ background: 'white', color: '#ef4444', border: '1px solid #ef4444', padding: '10px', borderRadius: '8px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '14px' }}>
+                                <span style={{ fontSize: '16px', border: '1px solid #ef4444', borderRadius: '50%', width: '18px', height: '18px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>₹</span> Salary
+                            </button>
+                            <button style={{ background: 'white', color: '#22c55e', border: '1px solid #22c55e', padding: '10px', borderRadius: '8px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '14px' }}>
+                                <span style={{ fontSize: '16px' }}>📈</span> Performance
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Right Panel */}
+                <div style={{ flex: 1, background: 'white', borderRadius: '12px', boxShadow: '0 4px 15px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
+                    {/* Tabs */}
+                    <div style={{ display: 'flex', borderBottom: '1px solid #e2e8f0' }}>
+                        <button onClick={() => setActiveTab('subjects')} style={{ flex: 1, padding: '15px', background: 'none', border: 'none', borderBottom: activeTab === 'subjects' ? '3px solid #8b5cf6' : '3px solid transparent', color: activeTab === 'subjects' ? '#8b5cf6' : '#64748b', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                            🖥️ Subjects
+                        </button>
+                        <button onClick={() => setActiveTab('profile')} style={{ flex: 1, padding: '15px', background: 'none', border: 'none', borderBottom: activeTab === 'profile' ? '3px solid #8b5cf6' : '3px solid transparent', color: activeTab === 'profile' ? '#8b5cf6' : '#64748b', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                            📝 Profile
+                        </button>
+                        <button onClick={() => setActiveTab('device')} style={{ flex: 1, padding: '15px', background: 'none', border: 'none', borderBottom: activeTab === 'device' ? '3px solid #8b5cf6' : '3px solid transparent', color: activeTab === 'device' ? '#8b5cf6' : '#64748b', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                            👆 Punches
+                        </button>
+                    </div>
+
+                    {/* Tab Content */}
+                    <div style={{ padding: '25px' }}>
+                        {activeTab === 'subjects' && (
+                            <div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '20px' }}>
+                                    <button style={{ background: '#8b5cf6', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '6px', fontWeight: '600', cursor: 'pointer' }}>+ Subject</button>
+                                    <select style={{ padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', color: '#64748b', outline: 'none' }}>
+                                        <option>Default Year</option>
+                                    </select>
+                                </div>
+                                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
+                                    <thead>
+                                        <tr style={{ background: '#f8fafc', color: '#475569' }}>
+                                            <th style={{ padding: '12px' }}>YEAR ↑</th>
+                                            <th style={{ padding: '12px' }}>SUBJECT/ BATCH ↑</th>
+                                            <th style={{ padding: '12px' }}>HOURS ↑</th>
+                                            <th style={{ padding: '12px' }}>COVERAGE ↑</th>
+                                            <th style={{ padding: '12px' }}>IMPACT ↑</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td colSpan="5" style={{ padding: '30px', textAlign: 'center', color: '#94a3b8' }}>
+                                                {teacher.role === 'teacher' && teacher.subject ? (
+                                                    <div>
+                                                        <strong>{teacher.subject}</strong> - {teacher.batch || 'N/A'}
+                                                    </div>
+                                                ) : 'No data available in table'}
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+                        {activeTab === 'profile' && (
+                            <div style={{ color: '#475569', lineHeight: '1.6' }}>
+                                <h3 style={{ marginTop: 0, color: '#1e293b' }}>Personal Information</h3>
+                                <p><strong>Role:</strong> <span style={{ textTransform: 'capitalize' }}>{teacher.role}</span></p>
+                                <p><strong>Experience:</strong> {teacher.experience || 'N/A'}</p>
+                                <p><strong>Timing:</strong> {teacher.timing || 'N/A'}</p>
+                                <p><strong>Salary:</strong> ₹ {teacher.salary || 0}</p>
+                                <p><strong>Aadhar:</strong> {teacher.aadhar || 'N/A'}</p>
+                                <p><strong>Gender:</strong> {teacher.gender || 'N/A'}</p>
+                            </div>
+                        )}
+                        {activeTab === 'device' && (
+                            <div style={{ display: 'flex', gap: '25px' }}>
+                                {/* Left Filter Panel */}
+                                <div style={{ flex: '0 0 220px', background: 'white', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 2px 10px rgba(0,0,0,0.02)' }}>
+                                    <div style={{ display: 'inline-block', background: '#f3e8ff', color: '#8b5cf6', padding: '6px 16px', borderRadius: '20px', fontSize: '13px', fontWeight: '600', marginBottom: '25px' }}>
+                                        Filter
+                                    </div>
+                                    <div style={{ marginBottom: '20px' }}>
+                                        <label style={{ display: 'block', fontSize: '13px', color: '#64748b', marginBottom: '8px', fontWeight: '500' }}>Month</label>
+                                        <select value={filterMonth} onChange={e => setFilterMonth(e.target.value)} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', color: '#475569', backgroundColor: '#f8fafc' }}>
+                                            <option value={1}>January</option>
+                                            <option value={2}>February</option>
+                                            <option value={3}>March</option>
+                                            <option value={4}>April</option>
+                                            <option value={5}>May</option>
+                                            <option value={6}>June</option>
+                                            <option value={7}>July</option>
+                                            <option value={8}>August</option>
+                                            <option value={9}>September</option>
+                                            <option value={10}>October</option>
+                                            <option value={11}>November</option>
+                                            <option value={12}>December</option>
+                                        </select>
+                                    </div>
+                                    <div style={{ marginBottom: '30px' }}>
+                                        <label style={{ display: 'block', fontSize: '13px', color: '#64748b', marginBottom: '8px', fontWeight: '500' }}>Year</label>
+                                        <select value={filterYear} onChange={e => setFilterYear(e.target.value)} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', color: '#475569', backgroundColor: '#f8fafc' }}>
+                                            <option value={new Date().getFullYear()}> {new Date().getFullYear()} </option>
+                                            <option value={new Date().getFullYear() - 1}> {new Date().getFullYear() - 1} </option>
+                                            <option value={new Date().getFullYear() - 2}> {new Date().getFullYear() - 2} </option>
+                                        </select>
+                                    </div>
+                                    <button onClick={() => fetchTeacherData(filterMonth, filterYear)} style={{ width: '100%', background: '#8b5cf6', color: 'white', border: 'none', padding: '12px', borderRadius: '8px', fontWeight: '600', cursor: 'pointer', transition: 'background 0.2s', ':hover': { background: '#7c3aed' } }}>
+                                        Get Punches
+                                    </button>
+                                </div>
+                                
+                                {/* Right Table Panel */}
+                                <div style={{ flex: 1 }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                                        <h3 style={{ margin: 0, color: '#1e293b', fontSize: '18px' }}>{teacher.name}</h3>
+                                        <div style={{ position: 'relative' }}>
+                                            <button onClick={() => setExportMenuOpen(!exportMenuOpen)} style={{ background: '#f3e8ff', color: '#8b5cf6', border: 'none', padding: '8px 16px', borderRadius: '6px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px' }}>
+                                                <span>📤</span> Export <span style={{ fontSize: '10px' }}>▼</span>
+                                            </button>
+                                            {exportMenuOpen && (
+                                                <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: '8px', background: 'white', border: '1px solid #e2e8f0', borderRadius: '8px', boxShadow: '0 4px 15px rgba(0,0,0,0.1)', zIndex: 10, minWidth: '150px', overflow: 'hidden' }}>
+                                                    <button onClick={() => handleExport('excel')} style={{ width: '100%', padding: '12px 16px', border: 'none', background: 'white', textAlign: 'left', cursor: 'pointer', fontSize: '13px', color: '#475569', display: 'flex', alignItems: 'center', gap: '10px', borderBottom: '1px solid #f1f5f9' }}>
+                                                        <span style={{ color: '#10b981' }}>📊</span> Excel (.xlsx)
+                                                    </button>
+                                                    <button onClick={() => handleExport('csv')} style={{ width: '100%', padding: '12px 16px', border: 'none', background: 'white', textAlign: 'left', cursor: 'pointer', fontSize: '13px', color: '#475569', display: 'flex', alignItems: 'center', gap: '10px', borderBottom: '1px solid #f1f5f9' }}>
+                                                        <span style={{ color: '#f59e0b' }}>📝</span> CSV (.csv)
+                                                    </button>
+                                                    <button onClick={() => handleExport('pdf')} style={{ width: '100%', padding: '12px 16px', border: 'none', background: 'white', textAlign: 'left', cursor: 'pointer', fontSize: '13px', color: '#475569', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                                        <span style={{ color: '#ef4444' }}>📄</span> PDF (.pdf)
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                    
+                                    <input type="text" placeholder="Search..." style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid #e2e8f0', marginBottom: '20px', outline: 'none', color: '#475569', fontSize: '14px', backgroundColor: '#f8fafc' }} />
+                                    
+                                    <div style={{ maxHeight: '450px', overflowY: 'auto', border: '1px solid #e2e8f0', borderRadius: '8px', backgroundColor: 'white' }}>
+                                    {data.records && data.records.length > 0 ? (
+                                        <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
+                                            <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
+                                                <tr style={{ background: '#f8fafc', color: '#64748b', fontSize: '12px', letterSpacing: '0.5px' }}>
+                                                    <th style={{ padding: '15px 12px', borderBottom: '1px solid #e2e8f0', fontWeight: '600' }}>DATE</th>
+                                                    <th style={{ padding: '15px 12px', borderBottom: '1px solid #e2e8f0', fontWeight: '600' }}>IN / OUT</th>
+                                                    <th style={{ padding: '15px 12px', borderBottom: '1px solid #e2e8f0', fontWeight: '600' }}>PUNCHES</th>
+                                                    <th style={{ padding: '15px 12px', borderBottom: '1px solid #e2e8f0', fontWeight: '600' }}>TOTAL HOURS</th>
+                                                    <th style={{ padding: '15px 12px', borderBottom: '1px solid #e2e8f0', fontWeight: '600' }}>STATUS</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {data.records.map((r, i) => (
+                                                    <tr key={i} style={{ borderBottom: '1px solid #f1f5f9', ':hover': { backgroundColor: '#f8fafc' } }}>
+                                                        <td style={{ padding: '15px 12px', fontWeight: '500', color: '#1e293b' }}>{r.date}</td>
+                                                        <td style={{ padding: '15px 12px', color: '#64748b' }}>
+                                                            {r.firstIn !== '--:--' ? (
+                                                                <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
+                                                                    <span style={{ color: '#10b981', fontWeight: '600' }}>{r.firstIn}</span> /
+                                                                    <span style={{ color: '#f59e0b', fontWeight: '600' }}>{r.lastOut}</span>
+                                                                </div>
+                                                            ) : (
+                                                                <span style={{ color: '#94a3b8' }}>--:-- / --:--</span>
+                                                            )}
+                                                        </td>
+                                                        <td style={{ padding: '15px 12px', color: '#64748b' }}>{r.totalEntries || 0}</td>
+                                                        <td style={{ padding: '15px 12px', color: '#1e293b', fontWeight: '500' }}>
+                                                            {r.durationMinutes ? `${Math.floor(r.durationMinutes / 60)}h ${r.durationMinutes % 60}m` : '0h 0m'}
+                                                        </td>
+                                                        <td style={{ padding: '15px 12px' }}>
+                                                            {r.status === 'Late' ? (
+                                                                <span style={{ background: '#fef5e7', color: '#e67e22', padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '600' }}>Late</span>
+                                                            ) : r.status === 'Absent' ? (
+                                                                <span style={{ background: '#fef2f2', color: '#ef4444', padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '600' }}>Absent</span>
+                                                            ) : r.status === 'Sunday' ? (
+                                                                <span style={{ background: '#f8fafc', color: '#64748b', padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '600' }}>Sunday</span>
+                                                            ) : (
+                                                                <span style={{ color: '#10b981', fontWeight: '600' }}>Present</span>
+                                                            )}
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    ) : (
+                                        <div style={{ padding: '40px', textAlign: 'center', color: '#94a3b8' }}>No data available in table</div>
+                                    )}
+                                    </div>
+                                    
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '20px 0 10px 0', color: '#1e293b', fontSize: '14px', fontWeight: '600' }}>
+                                        <div>TOTAL</div>
+                                        <div>{data.summary ? data.summary.totalHours : '0.00'} HRS</div>
+                                    </div>
+                                    <div style={{ color: '#94a3b8', fontSize: '13px' }}>
+                                        Showing {data.records ? data.records.length : 0} out of {data.records ? data.records.length : 0} entries
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 const StudentProfilePage = () => {
     const { id } = useParams();
     const [data, setData] = useState(null);
@@ -2872,9 +3340,11 @@ const StudentProfilePage = () => {
     const [editForm, setEditForm] = useState({});
     const [activeTab, setActiveTab] = useState('punches');
     const [paymentAmount, setPaymentAmount] = useState('');
+    const [filterMonth, setFilterMonth] = useState(new Date().getMonth() + 1);
+    const [filterYear, setFilterYear] = useState(new Date().getFullYear());
 
-    const fetchStudentData = () => {
-        api.get(`/attendance/student/${id}`)
+    const fetchStudentData = (month = filterMonth, year = filterYear) => {
+        api.get(`/attendance/student/${id}?month=${month}&year=${year}`)
             .then(res => {
                 setData(res.data);
                 setEditForm(res.data.student);
@@ -2947,35 +3417,48 @@ const StudentProfilePage = () => {
         }
     };
 
-    const exportToExcel = () => {
-        if (!data || !data.records) return;
+    const [exportMenuOpen, setExportMenuOpen] = useState(false);
 
-        // Headers
-        const headers = ["Student Name", "Date", "First In", "Last Out", "Duration"];
+    const handleExport = (format) => {
+        if (!data || !data.records || data.records.length === 0) return;
+        
+        const exportData = data.records.map(r => ({
+            "Date": r.date,
+            "In / Out": r.firstIn !== '--:--' ? `${r.firstIn} / ${r.lastOut}` : '--:-- / --:--',
+            "Punches": r.totalEntries || 0,
+            "Total Hours": r.durationMinutes ? `${Math.floor(r.durationMinutes / 60)}h ${r.durationMinutes % 60}m` : '0h 0m',
+            "Status": r.status
+        }));
 
-        const rows = data.records.map(r => {
-            const durationStr = r.durationSeconds !== undefined
-                ? `${Math.floor(r.durationSeconds / 3600)}h ${Math.floor((r.durationSeconds % 3600) / 60)}m ${r.durationSeconds % 60}s`
-                : `${Math.floor(r.durationMinutes / 60)}h ${r.durationMinutes % 60}m`;
+        const sName = (data.student && data.student.name) ? data.student.name : 'Student';
 
-            return [
-                `"${data.student.name}"`,
-                `"${r.date.split('-').reverse().join('/')}"`,
-                `"${r.firstIn}"`,
-                `"${r.lastOut}"`,
-                `"${durationStr}"`
-            ].join(',');
-        });
-
-        const csvContent = [headers.join(','), ...rows].join('\n');
-        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement("a");
-        link.setAttribute("href", url);
-        link.setAttribute("download", `${data.student.name}_Attendance.csv`);
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+        if (format === 'excel') {
+            const worksheet = XLSX.utils.json_to_sheet(exportData);
+            const workbook = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(workbook, worksheet, "Punches");
+            XLSX.writeFile(workbook, `${sName}_Punches_${filterMonth}_${filterYear}.xlsx`);
+        } else if (format === 'csv') {
+            const worksheet = XLSX.utils.json_to_sheet(exportData);
+            const csvOutput = XLSX.utils.sheet_to_csv(worksheet);
+            const blob = new Blob([csvOutput], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement("a");
+            const url = URL.createObjectURL(blob);
+            link.setAttribute("href", url);
+            link.setAttribute("download", `${sName}_Punches_${filterMonth}_${filterYear}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        } else if (format === 'pdf') {
+            const doc = new jsPDF();
+            doc.text(`${sName} - Punches (${filterMonth}/${filterYear})`, 14, 15);
+            doc.autoTable({
+                head: [['Date', 'In / Out', 'Punches', 'Total Hours', 'Status']],
+                body: exportData.map(r => [r['Date'], r['In / Out'], r['Punches'], r['Total Hours'], r['Status']]),
+                startY: 20
+            });
+            doc.save(`${sName}_Punches_${filterMonth}_${filterYear}.pdf`);
+        }
+        setExportMenuOpen(false);
     };
 
     if (loading) return <div style={{ padding: '40px', textAlign: 'center', fontSize: '18px', color: '#666' }}>Loading Student Profile...</div>;
@@ -3151,9 +3634,24 @@ const StudentProfilePage = () => {
                                 <div style={{ background: 'white', padding: '25px', borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.05)', display: 'flex', flexDirection: 'column' }}>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
                                         <h3 style={{ margin: 0, fontSize: '18px', color: '#1f2937' }}>Recent Attendance Logs</h3>
-                                        <button onClick={exportToExcel} style={{ background: '#10b981', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px' }}>
-                                            <span>📊</span> Export Excel
-                                        </button>
+                                        <div style={{ position: 'relative' }}>
+                                            <button onClick={() => setExportMenuOpen(!exportMenuOpen)} style={{ background: '#f3e8ff', color: '#8b5cf6', border: 'none', padding: '8px 16px', borderRadius: '6px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px' }}>
+                                                <span>📤</span> Export <span style={{ fontSize: '10px' }}>▼</span>
+                                            </button>
+                                            {exportMenuOpen && (
+                                                <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: '8px', background: 'white', border: '1px solid #e2e8f0', borderRadius: '8px', boxShadow: '0 4px 15px rgba(0,0,0,0.1)', zIndex: 10, minWidth: '150px', overflow: 'hidden' }}>
+                                                    <button onClick={() => handleExport('excel')} style={{ width: '100%', padding: '12px 16px', border: 'none', background: 'white', textAlign: 'left', cursor: 'pointer', fontSize: '13px', color: '#475569', display: 'flex', alignItems: 'center', gap: '10px', borderBottom: '1px solid #f1f5f9' }}>
+                                                        <span style={{ color: '#10b981' }}>📊</span> Excel (.xlsx)
+                                                    </button>
+                                                    <button onClick={() => handleExport('csv')} style={{ width: '100%', padding: '12px 16px', border: 'none', background: 'white', textAlign: 'left', cursor: 'pointer', fontSize: '13px', color: '#475569', display: 'flex', alignItems: 'center', gap: '10px', borderBottom: '1px solid #f1f5f9' }}>
+                                                        <span style={{ color: '#f59e0b' }}>📝</span> CSV (.csv)
+                                                    </button>
+                                                    <button onClick={() => handleExport('pdf')} style={{ width: '100%', padding: '12px 16px', border: 'none', background: 'white', textAlign: 'left', cursor: 'pointer', fontSize: '13px', color: '#475569', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                                        <span style={{ color: '#ef4444' }}>📄</span> PDF (.pdf)
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </div>
                                     </div>
                                     <div style={{ flex: 1, overflowY: 'auto', maxHeight: '350px', paddingRight: '10px' }}>
                                         {records.length > 0 ? (
@@ -3164,6 +3662,7 @@ const StudentProfilePage = () => {
                                                         <th style={{ padding: '12px 8px', fontWeight: 600 }}>First In</th>
                                                         <th style={{ padding: '12px 8px', fontWeight: 600 }}>Last Out</th>
                                                         <th style={{ padding: '12px 8px', fontWeight: 600 }}>Duration</th>
+                                                        <th style={{ padding: '12px 8px', fontWeight: 600 }}>Status</th>
                                                     </tr>
                                                 </thead>
                                                 <tbody>
@@ -3176,6 +3675,17 @@ const StudentProfilePage = () => {
                                                                 {r.durationSeconds !== undefined
                                                                     ? `${Math.floor(r.durationSeconds / 3600)}h ${Math.floor((r.durationSeconds % 3600) / 60)}m ${r.durationSeconds % 60}s`
                                                                     : `${Math.floor(r.durationMinutes / 60)}h ${r.durationMinutes % 60}m`}
+                                                            </td>
+                                                            <td style={{ padding: '14px 8px' }}>
+                                                                {r.status === 'Late' ? (
+                                                                    <span style={{ background: '#fef5e7', color: '#e67e22', padding: '4px 10px', borderRadius: '6px', fontSize: '12px', fontWeight: '600' }}>Late</span>
+                                                                ) : r.status === 'Absent' ? (
+                                                                    <span style={{ background: '#fef2f2', color: '#ef4444', padding: '4px 10px', borderRadius: '6px', fontSize: '12px', fontWeight: '600' }}>Absent</span>
+                                                                ) : r.status === 'Sunday' ? (
+                                                                    <span style={{ background: '#f8fafc', color: '#64748b', padding: '4px 10px', borderRadius: '6px', fontSize: '12px', fontWeight: '600' }}>Sunday</span>
+                                                                ) : (
+                                                                    <span style={{ color: '#10b981', fontWeight: '600', fontSize: '13px' }}>Present</span>
+                                                                )}
                                                             </td>
                                                         </tr>
                                                     ))}
@@ -3292,6 +3802,7 @@ function App() {
                         <Route path="/simulator" element={<ProtectedRoute><Layout logout={logout} user={user}><Simulator /></Layout></ProtectedRoute>} />
                         <Route path="/enquiries/new" element={<ProtectedRoute><Layout logout={logout} user={user}><NewEnquiryPage /></Layout></ProtectedRoute>} />
                         <Route path="/student/:id" element={<ProtectedRoute><Layout logout={logout} user={user}><StudentProfilePage /></Layout></ProtectedRoute>} />
+                        <Route path="/teacher/:id" element={<ProtectedRoute><Layout logout={logout} user={user}><TeacherProfilePage /></Layout></ProtectedRoute>} />
                         <Route path="*" element={<Navigate to="/" replace />} />
                     </Routes>
                 )}
