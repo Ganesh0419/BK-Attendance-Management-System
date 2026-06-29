@@ -611,7 +611,25 @@ app.put('/api/users/:id', async (req, res) => {
     return res.status(503).json({ error: 'Database offline' });
   }
   try {
-    const updatedUser = await User.findOneAndUpdate({ id: parseInt(id) }, req.body, { new: true });
+    let updateData = { ...req.body };
+    
+    // Handle base64 photo upload during edit
+    if (updateData.photo && updateData.photo.startsWith('data:image')) {
+      const matches = updateData.photo.match(/^data:image\/([a-zA-Z0-9+]+);base64,(.+)$/);
+      if (matches && matches.length === 3) {
+        const ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
+        const buffer = Buffer.from(matches[2], 'base64');
+        const filename = `student_${id}_${Date.now()}.${ext}`;
+        const filepath = path.join(UPLOADS_DIR, filename);
+        const fs = require('fs');
+        fs.writeFileSync(filepath, buffer);
+        updateData.photo = `/uploads/${filename}`;
+      } else {
+        delete updateData.photo;
+      }
+    }
+
+    const updatedUser = await User.findOneAndUpdate({ id: parseInt(id) }, updateData, { new: true });
     res.json({ success: true, user: updatedUser });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -625,7 +643,8 @@ app.delete('/api/users/:id', async (req, res) => {
     return res.status(503).json({ error: 'Database offline' });
   }
   try {
-    await User.findOneAndDelete({ id: parseInt(id) });
+    // The frontend passes fingerprint_id in the URL for deletion
+    await User.findOneAndDelete({ fingerprint_id: id });
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -827,32 +846,30 @@ app.get('/api/admin/dashboard', async (req, res) => {
 
     const userIds = Object.keys(punchesByUser);
     
+    const cleanUserIds = userIds.map(u => String(u).trim());
+    
     // Fetch all needed users in one query to avoid N+1 bottleneck
     const matchedUsers = await User.find({
       $or: [
-        { fingerprint_id: { $in: userIds.map(String) } },
-        { id: { $in: userIds.map(u => parseInt(u) || 0) } }
+        { fingerprint_id: { $in: cleanUserIds } },
+        { id: { $in: cleanUserIds.map(u => parseInt(u) || 0) } }
       ]
     });
 
     const userMap = {};
     matchedUsers.forEach(u => {
-      if (u.fingerprint_id) userMap[String(u.fingerprint_id)] = u;
-      if (u.id) userMap[String(u.id)] = u;
+      if (u.fingerprint_id) userMap[String(u.fingerprint_id).trim()] = u;
+      if (u.id) userMap[String(u.id).trim()] = u;
     });
 
     for (const userId of userIds) {
       const userPunches = punchesByUser[userId].sort((a, b) => a.timestamp - b.timestamp);
-<<<<<<< HEAD
-      const user = userMap[String(userId)];
-=======
-      let user = await User.findOne({ fingerprint_id: String(userId) });
-      if (!user) user = await User.findOne({ id: parseInt(userId) || 0 });
->>>>>>> friend/main
+      const cleanId = String(userId).trim();
+      const user = userMap[cleanId];
 
       recentAttendance.push({
-        userId: user ? user.fingerprint_id : userId,
-        name: user ? user.name : `User ${userId}`,
+        userId: user ? user.fingerprint_id : cleanId,
+        name: user ? user.name : `User ${cleanId}`,
         role: user ? user.role : 'user',
         photo: user ? user.photo : null,
         inTime: userPunches[0].timestamp.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),

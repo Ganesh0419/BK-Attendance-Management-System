@@ -6,7 +6,7 @@ import api from './api';
 import logo from './logo.jpeg';
 import { ResponsiveContainer, BarChart, CartesianGrid, XAxis, YAxis, Tooltip, Bar } from 'recharts';
 
-const backendHost = 'localhost';
+const backendHost = window.location.hostname;
 const socket = io(`http://${backendHost}:8080`);
 const AuthContext = React.createContext(null);
 
@@ -309,7 +309,8 @@ const Dashboard = () => {
     const getInitials = (name) => name ? name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2) : '??';
 
     const resolvedName = (punch) => {
-        const user = users.find(u => String(u.id) === String(punch.userId) || String(u.fingerprint_id) === String(punch.userId));
+        const punchId = String(punch.userId).trim();
+        const user = users.find(u => String(u.id).trim() === punchId || String(u.fingerprint_id).trim() === punchId);
         return user ? user.name : (punch.userName || `User ${punch.userId}`);
     };
 
@@ -318,7 +319,8 @@ const Dashboard = () => {
         if (punch.userPhoto) {
             photo = punch.userPhoto;
         } else {
-            const user = users.find(u => String(u.id) === String(punch.userId) || String(u.fingerprint_id) === String(punch.userId));
+            const punchId = String(punch.userId).trim();
+            const user = users.find(u => String(u.id).trim() === punchId || String(u.fingerprint_id).trim() === punchId);
             photo = user ? user.photo : null;
         }
         if (photo) {
@@ -345,7 +347,7 @@ const Dashboard = () => {
                 diffTime = bdayThisYear.getTime() - today.getTime();
             }
             const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-            return diffDays >= 0 && diffDays <= 30;
+            return diffDays >= 0;
         }).map(u => {
             const dobDate = new Date(u.dob);
             const bdayThisYear = new Date(today.getFullYear(), dobDate.getMonth(), dobDate.getDate());
@@ -624,7 +626,7 @@ const Dashboard = () => {
                 
                 {upcomingBirthdays.length === 0 ? (
                   <div style={{ padding: '20px', textAlign: 'center', color: '#888', fontSize: '13px' }}>
-                    No birthdays in the next 30 days.
+                    No birthdays found for any registered students.
                   </div>
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -639,7 +641,9 @@ const Dashboard = () => {
                             {u.diffDays === 0 ? '🎂 TODAY! Turning ' + u.age : `In ${u.diffDays} days (${new Date(u.dob).toLocaleDateString('en-GB', { month: 'short', day: 'numeric' })})`} • <span style={{textTransform:'capitalize'}}>{u.role}</span>
                           </div>
                         </div>
-                        <button style={{ background: '#e84393', border: 'none', color: 'white', padding: '6px 10px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer', fontWeight: 'bold' }}>Wish</button>
+                        <a href={`https://wa.me/91${u.studentPhone || u.parentPhone || ''}`} target="_blank" rel="noreferrer" style={{ background: '#e84393', border: 'none', color: 'white', padding: '6px 10px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer', fontWeight: 'bold', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                          ✉️ {u.studentPhone || u.parentPhone ? (u.studentPhone || u.parentPhone) : 'Wish'}
+                        </a>
                       </div>
                     ))}
                   </div>
@@ -751,7 +755,13 @@ const AttendancePage = () => {
     }, []);
 
     const getInitials = (name) => name ? name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2) : '??';
-    const resolvedName = (punch) => punch.userName || userMap[String(punch.userId)] || `User ${punch.userId}`;
+    const resolvedName = (punch) => {
+        const pId = String(punch.userId).trim();
+        for (const [key, name] of Object.entries(userMap)) {
+            if (key.trim() === pId) return name;
+        }
+        return punch.userName || `User ${punch.userId}`;
+    };
 
     return (
         <div className="dashboard-card">
@@ -1950,7 +1960,8 @@ const DevicesPage = () => {
     const toastTimerRef = React.useRef(null);
 
     const resolvedName = (scan) => {
-        const user = users.find(u => String(u.id) === String(scan.userId) || String(u.fingerprint_id) === String(scan.userId));
+        const scanId = String(scan.userId).trim();
+        const user = users.find(u => String(u.id).trim() === scanId || String(u.fingerprint_id).trim() === scanId);
         return user ? user.name : (scan.userName || `User ${scan.userId}`);
     };
 
@@ -1959,7 +1970,8 @@ const DevicesPage = () => {
         if (scan.userPhoto) {
             photo = scan.userPhoto;
         } else {
-            const user = users.find(u => String(u.id) === String(scan.userId) || String(u.fingerprint_id) === String(scan.userId));
+            const scanId = String(scan.userId).trim();
+            const user = users.find(u => String(u.id).trim() === scanId || String(u.fingerprint_id).trim() === scanId);
             photo = user ? user.photo : null;
         }
         if (photo) {
@@ -2415,13 +2427,13 @@ const BirthdaysPage = () => {
 
         u.daysUntil = diffDays;
         u.ageTurning = bday.getFullYear() - dob.getFullYear();
-        return diffDays >= 0 && diffDays <= 30;
+        return diffDays >= 0;
     }).sort((a, b) => a.daysUntil - b.daysUntil);
 
     return (
         <div className="dashboard-card">
             <div className="card-header">
-                <h2>🎂 Upcoming Birthdays (Next 30 Days)</h2>
+                <h2>🎂 All Upcoming Birthdays</h2>
             </div>
             <table className="dashboard-table">
                 <thead>
@@ -2452,13 +2464,15 @@ const BirthdaysPage = () => {
                                         `${u.daysUntil} days`}
                             </td>
                             <td>
-                                <button className="btn btn-primary" style={{ padding: '4px 10px', background: '#e74c3c', borderColor: '#e74c3c' }}>✉️ Send Wish</button>
+                                <a href={`https://wa.me/91${u.studentPhone || u.parentPhone || ''}`} target="_blank" rel="noreferrer" className="btn btn-primary" style={{ padding: '4px 10px', background: '#e74c3c', borderColor: '#e74c3c', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                                    ✉️ {u.studentPhone || u.parentPhone ? (u.studentPhone || u.parentPhone) : 'Send Wish'}
+                                </a>
                             </td>
                         </tr>
                     ))}
                     {upcomingBirthdays.length === 0 && (
                         <tr>
-                            <td colSpan="6" style={{ textAlign: 'center', padding: '20px', color: '#888' }}>No upcoming birthdays found in the next 30 days.</td>
+                            <td colSpan="6" style={{ textAlign: 'center', padding: '20px', color: '#888' }}>No birthdays found for any registered students.</td>
                         </tr>
                     )}
                 </tbody>
@@ -2647,6 +2661,17 @@ const StudentProfilePage = () => {
               <div>
                 <label style={{ display: 'block', fontSize: '13px', marginBottom: '5px', color: '#4b5563' }}>Full Name</label>
                 <input name="name" value={editForm.name || ''} onChange={handleEditChange} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #d1d5db', outline: 'none' }} />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', marginBottom: '5px', color: '#4b5563' }}>Profile Photo</label>
+                <input type="file" accept="image/*" onChange={(e) => {
+                  const file = e.target.files[0];
+                  if (file) {
+                    const reader = new FileReader();
+                    reader.onload = (ev) => setEditForm({ ...editForm, photo: ev.target.result });
+                    reader.readAsDataURL(file);
+                  }
+                }} style={{ width: '100%', padding: '7px', borderRadius: '8px', border: '1px solid #d1d5db', outline: 'none', background: 'white' }} />
               </div>
               <div>
                 <label style={{ display: 'block', fontSize: '13px', marginBottom: '5px', color: '#4b5563' }}>Email</label>
