@@ -868,6 +868,33 @@ const BulkUploadPage = () => {
     const [bulkFile, setBulkFile] = useState(null);
     const [successMessage, setSuccessMessage] = useState("");
 
+    // Report download states
+    const now = new Date();
+    const [reportMonth, setReportMonth] = useState(String(now.getMonth() + 1).padStart(2, '0'));
+    const [reportYear, setReportYear] = useState(String(now.getFullYear()));
+    const [reportDepartment, setReportDepartment] = useState('All');
+    const [downloading, setDownloading] = useState(false);
+
+    const courseOptions = [
+        'All',
+        'Teachers',
+        'Staff',
+        'Staff Selection Commission (SSC-CGL)',
+        'POLICE/ARMY/MILITARY TRAINING BATCH',
+        'XI - Science PCMB [JEE-NEET-CET]',
+        'XII - Science PCMB [JEE-NEET-CET]',
+        'UPSC - Civil Services Examination',
+        'UGC NET/ MH SET/ CSIR NET',
+        'MBA Entrance (CAT/MAT/MH CET)',
+        'MPSC - State Services Examination',
+        'Maharashtra Engineering Services (MES)',
+        'Banking [RBI/SBI/NABARD/SSC/IBPS]',
+        'MPSC (Group B & C)',
+        'RRB-NTPC'
+    ];
+
+    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
     const handleFileChange = (e) => {
         if (e.target.files.length > 0) setBulkFile(e.target.files[0]);
     };
@@ -911,33 +938,149 @@ const BulkUploadPage = () => {
         reader.readAsArrayBuffer(bulkFile);
     };
 
+    const handleDownloadMonthly = async () => {
+        setDownloading(true);
+        try {
+            const monthStr = `${reportYear}-${reportMonth}`;
+            const response = await api.get('/attendance/export-monthly', {
+                params: { month: monthStr, department: reportDepartment },
+                responseType: 'blob'
+            });
+            const url = window.URL.createObjectURL(new Blob([response.data]));
+            const link = document.createElement('a');
+            link.href = url;
+            link.setAttribute('download', `Attendance_Report_${monthStr}_${reportDepartment.replace(/[^a-zA-Z0-9]/g, '_')}.xlsx`);
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            window.URL.revokeObjectURL(url);
+        } catch (err) {
+            console.error('Download error:', err);
+            alert('Failed to download report. ' + (err.response?.data?.error || err.message));
+        }
+        setDownloading(false);
+    };
+
+    const handleDownloadYearly = async () => {
+        setDownloading(true);
+        try {
+            const response = await api.get('/attendance/export-yearly', {
+                params: { year: reportYear, department: reportDepartment },
+                responseType: 'blob'
+            });
+            const url = window.URL.createObjectURL(new Blob([response.data]));
+            const link = document.createElement('a');
+            link.href = url;
+            link.setAttribute('download', `Attendance_Report_${reportYear}_${reportDepartment.replace(/[^a-zA-Z0-9]/g, '_')}.xlsx`);
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            window.URL.revokeObjectURL(url);
+        } catch (err) {
+            console.error('Download error:', err);
+            alert('Failed to download yearly report. ' + (err.response?.data?.error || err.message));
+        }
+        setDownloading(false);
+    };
+
     return (
         <div className="dashboard-card">
             <div className="card-header">
-                <h2>📁 Student Bulk Upload</h2>
+                <h2>📁 Attendance Reports</h2>
             </div>
-            <div style={{ marginBottom: '30px', background: '#fff', padding: '20px', borderRadius: '8px', border: '1px solid #e0e0e0' }}>
-                <h3 style={{ fontSize: '18px', color: '#3b3b58', marginBottom: '15px', marginTop: 0 }}>Upload Excel File</h3>
-                {successMessage && <div style={{ padding: '10px', background: '#d4edda', color: '#155724', marginBottom: '15px', borderRadius: '4px' }}>{successMessage}</div>}
-                <div style={{ display: 'flex', gap: '15px', alignItems: 'center', flexWrap: 'wrap' }}>
-                    <div style={{ position: 'relative', flex: '1', minWidth: '300px', maxWidth: '400px' }}>
-                        <label style={{ position: 'absolute', top: '-8px', left: '10px', background: 'white', padding: '0 5px', fontSize: '12px', color: '#888' }}>Excel File</label>
-                        <div style={{ display: 'flex', border: '1px solid #e0e0e0', borderRadius: '6px', overflow: 'hidden', background: '#fff' }}>
-                            <input type="file" accept=".xlsx, .xls, .csv" onChange={handleFileChange} style={{ flex: 1, padding: '10px', outline: 'none', border: 'none', background: 'transparent' }} />
-                            <a href="#" onClick={(e) => {
-                                e.preventDefault();
-                                const ws = XLSX.utils.json_to_sheet([{ Name: 'John Doe', Email: 'john@example.com', RegisterNo: '1001', Phone: '9876543210', Course: 'Math' }]);
-                                const wb = XLSX.utils.book_new();
-                                XLSX.utils.book_append_sheet(wb, ws, "Template");
-                                XLSX.writeFile(wb, "Student_Bulk_Template.xlsx");
-                            }} style={{ padding: '10px 15px', borderLeft: '1px solid #e0e0e0', color: '#8b5cf6', textDecoration: 'none', background: '#fcfcfc', display: 'flex', alignItems: 'center', justifyContent: 'center' }} title="Download Template">
-                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-                            </a>
-                        </div>
+
+            {/* ===== DOWNLOAD ATTENDANCE REPORT SECTION ===== */}
+            <div style={{ background: 'linear-gradient(135deg, #f8faff 0%, #f0f4ff 100%)', padding: '25px', borderRadius: '12px', border: '1px solid #d0d8f0', marginBottom: '20px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
+                    <span style={{ fontSize: '24px' }}>📊</span>
+                    <div>
+                        <h3 style={{ fontSize: '18px', color: '#1e293b', margin: 0, fontWeight: 700 }}>Download Attendance Report</h3>
+                        <p style={{ fontSize: '13px', color: '#64748b', margin: '4px 0 0 0' }}>Select course, month & year to download attendance data as Excel</p>
                     </div>
-                    <button onClick={handleLoadData} style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#fff', border: '1px solid #a855f7', color: '#a855f7', padding: '10px 20px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', transition: 'all 0.2s ease' }} onMouseOver={(e) => { e.currentTarget.style.background = '#f3e8ff'; }} onMouseOut={(e) => { e.currentTarget.style.background = '#fff'; }}>
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
-                        Load Data
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', marginBottom: '20px' }}>
+                    {/* Course / Department Selector */}
+                    <div>
+                        <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#475569', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Course / Department</label>
+                        <select
+                            value={reportDepartment}
+                            onChange={(e) => setReportDepartment(e.target.value)}
+                            style={{ width: '100%', padding: '11px 14px', borderRadius: '8px', border: '1px solid #cbd5e1', background: '#fff', fontSize: '14px', color: '#1e293b', outline: 'none', cursor: 'pointer', appearance: 'auto', boxSizing: 'border-box' }}
+                        >
+                            {courseOptions.map(c => (
+                                <option key={c} value={c}>{c}</option>
+                            ))}
+                        </select>
+                    </div>
+
+                    {/* Month Selector */}
+                    <div>
+                        <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#475569', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Month</label>
+                        <select
+                            value={reportMonth}
+                            onChange={(e) => setReportMonth(e.target.value)}
+                            style={{ width: '100%', padding: '11px 14px', borderRadius: '8px', border: '1px solid #cbd5e1', background: '#fff', fontSize: '14px', color: '#1e293b', outline: 'none', cursor: 'pointer', appearance: 'auto', boxSizing: 'border-box' }}
+                        >
+                            {monthNames.map((m, idx) => (
+                                <option key={m} value={String(idx + 1).padStart(2, '0')}>{m}</option>
+                            ))}
+                        </select>
+                    </div>
+
+                    {/* Year Selector */}
+                    <div>
+                        <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#475569', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Year</label>
+                        <select
+                            value={reportYear}
+                            onChange={(e) => setReportYear(e.target.value)}
+                            style={{ width: '100%', padding: '11px 14px', borderRadius: '8px', border: '1px solid #cbd5e1', background: '#fff', fontSize: '14px', color: '#1e293b', outline: 'none', cursor: 'pointer', appearance: 'auto', boxSizing: 'border-box' }}
+                        >
+                            {Array.from({ length: 5 }, (_, i) => String(now.getFullYear() - 2 + i)).map(y => (
+                                <option key={y} value={y}>{y}</option>
+                            ))}
+                        </select>
+                    </div>
+                </div>
+
+                {/* Info bar */}
+                <div style={{ background: '#e0e7ff', borderRadius: '8px', padding: '12px 16px', marginBottom: '18px', display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13px', color: '#3730a3' }}>
+                    <span style={{ fontSize: '16px' }}>ℹ️</span>
+                    <span>
+                        Generating report for <strong>{reportDepartment === 'All' ? 'All Departments' : reportDepartment}</strong> — <strong>{monthNames[parseInt(reportMonth) - 1]} {reportYear}</strong>
+                    </span>
+                </div>
+
+                {/* Download Buttons */}
+                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                    <button
+                        onClick={handleDownloadMonthly}
+                        disabled={downloading}
+                        style={{
+                            display: 'flex', alignItems: 'center', gap: '10px',
+                            background: downloading ? '#94a3b8' : 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)',
+                            color: '#fff', border: 'none', padding: '12px 24px', borderRadius: '8px',
+                            fontWeight: 700, fontSize: '14px', cursor: downloading ? 'wait' : 'pointer',
+                            boxShadow: '0 2px 8px rgba(59,130,246,0.3)', transition: 'all 0.2s ease'
+                        }}
+                    >
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                        {downloading ? 'Downloading...' : `Download ${monthNames[parseInt(reportMonth) - 1]} ${reportYear} Report`}
+                    </button>
+
+                    <button
+                        onClick={handleDownloadYearly}
+                        disabled={downloading}
+                        style={{
+                            display: 'flex', alignItems: 'center', gap: '10px',
+                            background: downloading ? '#94a3b8' : 'linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)',
+                            color: '#fff', border: 'none', padding: '12px 24px', borderRadius: '8px',
+                            fontWeight: 700, fontSize: '14px', cursor: downloading ? 'wait' : 'pointer',
+                            boxShadow: '0 2px 8px rgba(139,92,246,0.3)', transition: 'all 0.2s ease'
+                        }}
+                    >
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                        {downloading ? 'Downloading...' : `Download Full Year ${reportYear} Report (All 12 Months)`}
                     </button>
                 </div>
             </div>
@@ -2082,7 +2225,7 @@ const EnrollStudentPage = () => {
     const [formData, setFormData] = useState({
         name: '', fatherName: '', motherName: '', aadhar: '', enquiryDate: new Date().toISOString().split('T')[0], gender: 'Male', dob: '', email: '', fingerprint_id: '', address: '',
         fatherContact: '', motherContact: '', studentContact: '',
-        branch: '', course: '', batchTiming: '',
+        course: '', batchTiming: '',
         previousSchool: '', tenthPercent: '', twelfthPercent: '',
         bankName: '', accountNumber: '', ifscCode: '', accountHolder: '',
         amountReceived: '', paymentMode: '', installment: 'No', totalFee: ''
@@ -2218,13 +2361,13 @@ const EnrollStudentPage = () => {
     const amountWords = receivedNum ? numberToWords(receivedNum) : 'Zero';
 
     const step1Keys = ['name', 'fatherName', 'motherName', 'aadhar', 'enquiryDate', 'gender', 'dob', 'email', 'fingerprint_id', 'address', 'fatherContact', 'motherContact', 'studentContact'];
-    const step2Keys = ['branch', 'course', 'batchTiming'];
+    const step2Keys = ['course', 'batchTiming'];
     const step3Keys = ['previousSchool', 'tenthPercent', 'twelfthPercent'];
     const step4Keys = ['bankName', 'accountNumber', 'ifscCode', 'accountHolder', 'amountReceived', 'paymentMode', 'installment', 'totalFee'];
 
     const friendlyNames = {
         name: "Student Name", fatherName: "Father's Name", motherName: "Mother's Name", aadhar: "Aadhar Number", enquiryDate: "Enquiry Date", gender: "Gender", dob: "Date of Birth", email: "Email", fingerprint_id: "Biometric Registration No.", address: "Address", fatherContact: "Father Contact", motherContact: "Mother Contact", studentContact: "Student Contact",
-        branch: "Branch", course: "Course", batchTiming: "Batch Timing", previousSchool: "Previous School", tenthPercent: "10th Percentage", twelfthPercent: "12th Percentage",
+        course: "Course", batchTiming: "Batch Timing", previousSchool: "Previous School", tenthPercent: "10th Percentage", twelfthPercent: "12th Percentage",
         bankName: "Bank Name", accountNumber: "Account Number", ifscCode: "IFSC Code", accountHolder: "Account Holder", amountReceived: "Amount Received", paymentMode: "Payment Mode", installment: "Installment", totalFee: "Total Fee"
     };
 
@@ -2424,12 +2567,6 @@ const EnrollStudentPage = () => {
                         📚 Class Detail
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '25px', marginTop: '10px' }}>
-                        <div>
-                            <select name="branch" value={formData.branch} onChange={handleInput} style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none', color: '#555', appearance: 'none', background: 'url("data:image/svg+xml;utf8,<svg fill=%27black%27 height=%2724%27 viewBox=%270 0 24 24%27 width=%2724%27 xmlns=%27http://www.w3.org/2000/svg%27><path d=%27M7 10l5 5 5-5z%27/><path d=%27M0 0h24v24H0z%27 fill=%27none%27/></svg>") no-repeat right 10px center' }}>
-                                <option value="" disabled>Select Branch*</option>
-                                <option>Nashik Main</option>
-                            </select>
-                        </div>
                         <div>
                             <select name="course" value={formData.course} onChange={handleInput} style={{ width: '100%', padding: '14px', border: '1px solid #e0e0e0', borderRadius: '6px', outline: 'none', color: '#555', appearance: 'none', background: 'url("data:image/svg+xml;utf8,<svg fill=%27black%27 height=%2724%27 viewBox=%270 0 24 24%27 width=%2724%27 xmlns=%27http://www.w3.org/2000/svg%27><path d=%27M7 10l5 5 5-5z%27/><path d=%27M0 0h24v24H0z%27 fill=%27none%27/></svg>") no-repeat right 10px center' }}>
                                 <option value="" disabled>Select Course*</option>
@@ -3791,7 +3928,7 @@ const StudentProfilePage = () => {
                         <div><strong style={{ color: '#374151' }}>Student Phone:</strong> {student.studentPhone || 'N/A'}</div>
                         <div><strong style={{ color: '#374151' }}>Mother Phone:</strong> {student.motherPhone || 'N/A'}</div>
                         <div><strong style={{ color: '#374151' }}>Father Phone:</strong> {student.fatherPhone || 'N/A'}</div>
-                        <div><strong style={{ color: '#374151' }}>Branch:</strong> {student.branch || 'N/A'}</div>
+                        <div><strong style={{ color: '#374151' }}>Course:</strong> {student.course || 'N/A'}</div>
                     </div>
                 </div>
                 <div style={{ position: 'absolute', top: '30px', right: '30px', display: 'flex', gap: '10px' }}>
@@ -3838,8 +3975,22 @@ const StudentProfilePage = () => {
                                 <input name="fatherPhone" value={editForm.fatherPhone || ''} onChange={handleEditChange} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #d1d5db', outline: 'none' }} />
                             </div>
                             <div>
-                                <label style={{ display: 'block', fontSize: '13px', marginBottom: '5px', color: '#4b5563' }}>Branch</label>
-                                <input name="branch" value={editForm.branch || ''} onChange={handleEditChange} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #d1d5db', outline: 'none' }} />
+                                <label style={{ display: 'block', fontSize: '13px', marginBottom: '5px', color: '#4b5563' }}>Course</label>
+                                <select name="course" value={editForm.course || ''} onChange={handleEditChange} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #d1d5db', outline: 'none', background: 'white' }}>
+                                    <option value="" disabled>Select Course*</option>
+                                    <option>Staff Selection Commission (SSC-CGL)</option>
+                                    <option>POLICE/ARMY/MILITARY TRAINING BATCH</option>
+                                    <option>XI - Science PCMB [JEE-NEET-CET]</option>
+                                    <option>XII - Science PCMB [JEE-NEET-CET]</option>
+                                    <option>UPSC - Civil Services Examination</option>
+                                    <option>UGC NET/ MH SET/ CSIR NET</option>
+                                    <option>MBA Entrance (CAT/MAT/MH CET)</option>
+                                    <option>MPSC - State Services Examination</option>
+                                    <option>Maharashtra Engineering Services (MES)</option>
+                                    <option>Banking [RBI/SBI/NABARD/SSC/IBPS]</option>
+                                    <option>MPSC (Group B & C)</option>
+                                    <option>RRB-NTPC</option>
+                                </select>
                             </div>
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '25px' }}>
