@@ -181,12 +181,14 @@ const userSchema = new mongoose.Schema({
   amountReceivedWords: { type: String },
   dueFees: { type: Number },
   salary: { type: Number },
+  batch: { type: String },
   profession: { type: String },
   photoUrl: { type: String, required: false },
   photo: { type: String },
   experience: { type: String },
   subject: { type: String },
-  timing: { type: String }
+  timing: { type: String },
+  createdAt: { type: Date, default: Date.now }
 });
 const User = mongoose.model('User', userSchema);
 
@@ -537,10 +539,44 @@ app.post(['/iclock/cdata', '/iclock/cdata.aspx'], async (req, res) => {
 // --- HTTP API Endpoints ---
 
 // Auth Login
-app.post('/api/auth/login', (req, res) => {
+app.post('/api/auth/login', async (req, res) => {
   const { email, password } = req.body;
 
-  if (email && password) {
+  if (!email || !password) {
+    return res.status(400).json({ message: 'Email and password are required' });
+  }
+
+  try {
+    // Check default admin credential first
+    if (email === 'admin@school.com' && password === 'admin123') {
+      return res.json({
+        token: 'mock-jwt-token-12345',
+        user: {
+          id: 1,
+          name: 'Admin User',
+          email: email,
+          role: 'admin'
+        }
+      });
+    }
+
+    // Try finding the user in the database by email
+    if (mongoose.connection.readyState === 1) {
+      const dbUser = await User.findOne({ email: { $regex: new RegExp(`^${email.trim()}$`, 'i') } });
+      if (dbUser) {
+        return res.json({
+          token: 'mock-jwt-token-12345',
+          user: {
+            id: dbUser.id,
+            name: dbUser.name,
+            email: dbUser.email,
+            role: dbUser.role
+          }
+        });
+      }
+    }
+
+    // Fallback if not found in database but credentials provided
     res.json({
       token: 'mock-jwt-token-12345',
       user: {
@@ -550,8 +586,8 @@ app.post('/api/auth/login', (req, res) => {
         role: 'admin'
       }
     });
-  } else {
-    res.status(400).json({ message: 'Email and password are required' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -618,7 +654,9 @@ app.post('/api/users/enroll', async (req, res) => {
       experience,
       subject,
       timing,
-      profession
+      profession,
+      salary,
+      batch: req.body.batch
     });
     console.log(`✅ Enrolled new ${role || 'student'}: ${name} with Biometric ID: ${fingerprint_id}`);
     res.json({ success: true, user: newUser });
@@ -639,6 +677,9 @@ app.put('/api/users/:id', async (req, res) => {
   }
   try {
     let updateData = { ...req.body };
+    if (updateData.studentContact && !updateData.studentPhone) {
+      updateData.studentPhone = updateData.studentContact;
+    }
 
     // Handle base64 photo upload during edit
     if (updateData.photo && updateData.photo.startsWith('data:image')) {
@@ -839,6 +880,8 @@ app.get('/api/admin/dashboard', async (req, res) => {
       stats: {
         totalUsers: 5,
         todayAttend: 80,
+        presentCount: 4,
+        newUsersToday: 0,
         pendingForms: 18,
         approvedForms: 45,
         activeTeachers: 2,
@@ -855,6 +898,10 @@ app.get('/api/admin/dashboard', async (req, res) => {
     startOfToday.setHours(0, 0, 0, 0);
     const endOfToday = new Date();
     endOfToday.setHours(23, 59, 59, 999);
+
+    const newUsersToday = await User.countDocuments({
+      createdAt: { $gte: startOfToday, $lte: endOfToday }
+    });
 
     const todaysPunches = await Punch.find({
       timestamp: { $gte: startOfToday, $lte: endOfToday }
@@ -928,6 +975,8 @@ app.get('/api/admin/dashboard', async (req, res) => {
       stats: {
         totalUsers,
         todayAttend: todayAttendPercent,
+        presentCount: recentAttendance.length,
+        newUsersToday,
         pendingForms: 18,
         approvedForms: 45,
         activeTeachers: await User.countDocuments({ role: 'teacher' }),
@@ -1008,7 +1057,10 @@ app.post('/api/users', async (req, res) => {
 app.put('/api/users/:id', async (req, res) => {
   try {
     const id = req.params.id;
-    const updateData = req.body;
+    const updateData = { ...req.body };
+    if (updateData.studentContact && !updateData.studentPhone) {
+      updateData.studentPhone = updateData.studentContact;
+    }
 
     console.log(`[PUT /api/users/${id}] Attempting update. ID received: "${id}"`);
     if (updateData._id) {
@@ -1121,6 +1173,10 @@ app.get('/api/staff/payroll-summary', async (req, res) => {
       const uId = String(user.fingerprint_id) || String(user.id);
       const userTodayPunches = todaysPunches.filter(p => String(p.userId) === uId).sort((a, b) => a.timestamp - b.timestamp);
       const userMonthPunches = monthPunches.filter(p => String(p.userId) === uId).sort((a, b) => a.timestamp - b.timestamp);
+
+      let daysPresentCount = 0;
+      let dLateMinutes = 0;
+      let dPay = 0;
 
       // Status for today
       let status = 'Absent';
@@ -1250,6 +1306,15 @@ app.get('/api/staff/payroll-summary', async (req, res) => {
         profession: user.profession,
         salary: baseSalary,
         fingerprint_id: user.fingerprint_id,
+        email: user.email,
+        studentPhone: user.studentPhone,
+        aadhar: user.aadhar,
+        gender: user.gender,
+        dob: user.dob,
+        batch: user.batch,
+        experience: user.experience,
+        timing: user.timing,
+        photo: user.photo,
         status,
         inTime: inTime ? inTime.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '--:--',
         outTime: outTime ? outTime.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '--:--',
@@ -1655,6 +1720,6 @@ app.use((req, res) => {
 // Start unified server on ALL interfaces so LAN devices (eSSL) can reach it
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Unified Backend & ADMS Server is running on http://0.0.0.0:${PORT}`);
-  console.log(`📡 LAN accessible at http://192.168.0.107:${PORT}`);
-  console.log(`🔬 ADMS endpoint: POST http://192.168.0.107:${PORT}/iclock/cdata`);
+  console.log(`📡 LAN accessible at http://192.168.0.106:${PORT}`);
+  console.log(`🔬 ADMS endpoint: POST http://192.168.0.106:${PORT}/iclock/cdata`);
 });
