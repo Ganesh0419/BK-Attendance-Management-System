@@ -216,6 +216,16 @@ const Dashboard = () => {
     const [recent, setRecent] = useState([]);
     const [livePunches, setLivePunches] = useState([]);
 
+    const [currentPage, setCurrentPage] = useState(1);
+    const itemsPerPage = 10;
+    const indexOfLastItem = currentPage * itemsPerPage;
+    const indexOfFirstItem = indexOfLastItem - itemsPerPage;
+    const currentItems = recent.slice(indexOfFirstItem, indexOfLastItem);
+    const totalPages = Math.ceil(recent.length / itemsPerPage);
+
+    const navigate = useNavigate();
+    const [drafts, setDrafts] = useState([]);
+
     const [lastScanToast, setLastScanToast] = useState(null);
     const toastRef = React.useRef(null);
 
@@ -239,6 +249,7 @@ const Dashboard = () => {
     };
 
     useEffect(() => {
+        setDrafts(JSON.parse(localStorage.getItem('admission_drafts') || '[]'));
         api.get('/users').then(res => setUsers(res.data)).catch(() => { });
         api.get('/admin/dashboard').then(res => {
             setStats(res.data.stats);
@@ -428,19 +439,26 @@ const Dashboard = () => {
 
             <div className="stats-grid">
                 <div className="stat-card">
-                    <h3>👨‍🎓 Total Users</h3>
+                    <h3>👥 Active Users</h3>
                     <div className="number">{stats.totalUsers}</div>
-                    <div className="change">↑ 12 new today</div>
+                    <div className="change">
+                        {stats.newUsersToday > 0 ? `↑ ${stats.newUsersToday} new today` : '0 new today'}
+                    </div>
                 </div>
                 <div className="stat-card">
-                    <h3>✅ Today's Attendance</h3>
-                    <div className="number" style={{ color: '#27ae60' }}>{stats.todayAttend}%</div>
-                    <div className="change">↑ 2% from yesterday</div>
+                    <h3>✅ Today's Live Attendance</h3>
+                    <div className="number" style={{ color: '#27ae60' }}>
+                        {stats.presentCount || 0} / {stats.totalUsers || 0}
+                    </div>
+                    <div className="change">↑ {stats.todayAttend}% attendance rate</div>
                 </div>
-                <div className="stat-card pending">
-                    <h3>📝 Pending Forms</h3>
-                    <div className="number">{stats.pendingForms}</div>
-                    <div className="change">⏳ 5 urgent</div>
+                <div className="stat-card pending" style={{ cursor: 'pointer' }} onClick={() => {
+                    const admissionEl = document.querySelector('.widget-sidebar');
+                    if (admissionEl) admissionEl.scrollIntoView({ behavior: 'smooth' });
+                }}>
+                    <h3>📝 Incomplete Forms</h3>
+                    <div className="number">{drafts.length}</div>
+                    <div className="change">⏳ Saved drafts</div>
                 </div>
                 <div className="stat-card alert">
                     <h3>⚡ Active Biometrics</h3>
@@ -556,7 +574,7 @@ const Dashboard = () => {
                         <tbody id="attendanceTable">
                             {recent.length === 0 ? (
                                 <tr><td colSpan="6" style={{ textAlign: 'center', padding: '40px', color: '#888' }}>No attendance records yet today. Waiting for machine sync...</td></tr>
-                            ) : recent.map((r, i) => (
+                            ) : currentItems.map((r, i) => (
                                 <tr key={i}>
                                     <td>
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -579,13 +597,36 @@ const Dashboard = () => {
                     </table>
 
                     <div style={{ marginTop: '15px', display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#666', alignItems: 'center' }}>
-                        <span>Showing {recent.length} entries</span>
+                        <span>
+                            Showing {recent.length === 0 ? 0 : indexOfFirstItem + 1} to {Math.min(indexOfLastItem, recent.length)} of {recent.length} entries
+                        </span>
                         <div style={{ display: 'flex', gap: '5px' }}>
-                            <button className="btn" style={{ background: '#eee' }}>Previous</button>
-                            <button className="btn btn-primary">1</button>
-                            <button className="btn" style={{ background: '#eee' }}>2</button>
-                            <button className="btn" style={{ background: '#eee' }}>3</button>
-                            <button className="btn" style={{ background: '#eee' }}>Next</button>
+                            <button
+                                className="btn"
+                                style={{ background: currentPage === 1 ? '#f5f5f5' : '#eee', cursor: currentPage === 1 ? 'not-allowed' : 'pointer' }}
+                                disabled={currentPage === 1}
+                                onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                            >
+                                Previous
+                            </button>
+                            {Array.from({ length: totalPages }, (_, idx) => idx + 1).map(pageNumber => (
+                                <button
+                                    key={pageNumber}
+                                    className={`btn ${currentPage === pageNumber ? 'btn-primary' : ''}`}
+                                    style={{ background: currentPage === pageNumber ? '' : '#eee', cursor: 'pointer' }}
+                                    onClick={() => setCurrentPage(pageNumber)}
+                                >
+                                    {pageNumber}
+                                </button>
+                            ))}
+                            <button
+                                className="btn"
+                                style={{ background: currentPage === totalPages || totalPages === 0 ? '#f5f5f5' : '#eee', cursor: (currentPage === totalPages || totalPages === 0) ? 'not-allowed' : 'pointer' }}
+                                disabled={currentPage === totalPages || totalPages === 0}
+                                onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                            >
+                                Next
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -594,28 +635,36 @@ const Dashboard = () => {
                     <div className="dashboard-card">
                         <div className="card-header">
                             <h2>📝 Admission Forms</h2>
-                            <button className="btn btn-primary" style={{ fontSize: '12px', padding: '4px 12px' }}>+ New</button>
+                            <button className="btn btn-primary" style={{ fontSize: '12px', padding: '4px 12px' }} onClick={() => navigate('/enroll-student')}>+ New</button>
                         </div>
                         <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
-                            <div className="admission-item">
-                                <div><div className="name">Ayesha Fatima</div><div className="class">Class 10-A • Parent: Mr. Khan</div></div>
-                                <span className="status pending">Pending</span>
-                            </div>
-                            <div className="admission-item">
-                                <div><div className="name">Rohan Mehta</div><div className="class">Class 8-B • Parent: Mrs. Mehta</div></div>
-                                <span className="status pending">Pending</span>
-                            </div>
-                            <div className="admission-item">
-                                <div><div className="name">Priya Singh</div><div className="class">Class 9-C • Parent: Mr. Singh</div></div>
-                                <span className="status approved">Approved</span>
-                            </div>
-                            <div className="admission-item">
-                                <div><div className="name">Ali Hassan</div><div className="class">Class 7-A • Parent: Mrs. Hassan</div></div>
-                                <span className="status pending">Pending</span>
-                            </div>
+                            {drafts.length === 0 ? (
+                                <div style={{ padding: '20px 10px', textAlign: 'center', color: '#888', fontSize: '13px' }}>
+                                    No incomplete/draft forms.
+                                </div>
+                            ) : (
+                                drafts.map((d) => (
+                                    <div
+                                        key={d.id}
+                                        className="admission-item"
+                                        onClick={() => navigate(`/enroll-student?draftId=${d.id}`)}
+                                        style={{ cursor: 'pointer', transition: 'background 0.2s', padding: '8px', borderBottom: '1px solid #f1f5f9' }}
+                                        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f8fafc'}
+                                        onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                                    >
+                                        <div>
+                                            <div className="name" style={{ fontWeight: 600 }}>{d.formData.name || 'Untitled Draft'}</div>
+                                            <div className="class" style={{ fontSize: '11px', color: '#666' }}>
+                                                {d.formData.course || 'No Course'} • Step {d.step}/4 • Saved {new Date(d.updatedAt).toLocaleDateString()}
+                                            </div>
+                                        </div>
+                                        <span className="status pending" style={{ background: '#fef3c7', color: '#d97706', padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 600 }}>Incomplete</span>
+                                    </div>
+                                ))
+                            )}
                         </div>
                         <div style={{ marginTop: '10px', fontSize: '13px', color: '#666' }}>
-                            <span>📊 18 pending • 45 approved this month</span>
+                            <span>📊 {drafts.length} incomplete drafts saved</span>
                         </div>
                     </div>
 
@@ -1152,6 +1201,7 @@ const TeachersPage = () => {
     const [salary, setSalary] = useState('');
     const [dailySalary, setDailySalary] = useState('');
     const [profession, setProfession] = useState('');
+    const [dob, setDob] = useState('');
     const [photoData, setPhotoData] = useState(null);
     const videoRef = useRef(null);
     const canvasRef = useRef(null);
@@ -1291,12 +1341,14 @@ const TeachersPage = () => {
                 experience,
                 subject,
                 timing: finalTiming,
-                salary: role === 'teacher' ? salary : 0,
+                salary: (role === 'teacher' || role === 'staff') ? salary : 0,
                 profession,
                 batch: finalBatch,
                 studentContact: phone,
+                studentPhone: phone,
                 aadhar,
                 gender,
+                dob,
                 photo: photoData
             };
             if (editId) {
@@ -1306,7 +1358,7 @@ const TeachersPage = () => {
             }
             setShowModal(false);
             stopCamera();
-            setName(''); setEmail(''); setFingerprintId(''); setExperience(''); setSubject(''); setTiming(''); setSalary(''); setDailySalary(''); setProfession(''); setBatch('11th PCMB'); setOtherBatch(''); setPhotoData(null);
+            setName(''); setEmail(''); setFingerprintId(''); setExperience(''); setSubject(''); setTiming(''); setSalary(''); setDailySalary(''); setProfession(''); setBatch('11th PCMB'); setOtherBatch(''); setPhotoData(null); setDob('');
             setStartHour('09'); setStartMin('00'); setStartAmpm('AM'); setEndHour('06'); setEndMin('00'); setEndAmpm('PM');
             setPhone(''); setAadhar(''); setGender('Male');
             fetchTeachers();
@@ -1337,6 +1389,7 @@ const TeachersPage = () => {
         setPhone(t.studentPhone || '');
         setAadhar(t.aadhar || '');
         setGender(t.gender || 'Male');
+        setDob(t.dob || '');
         setBatch(t.batch || '11th PCMB');
         setPhotoData(t.photo || null);
         setShowModal(true);
@@ -1413,7 +1466,7 @@ const TeachersPage = () => {
                     <button className="btn btn-info" style={{ marginRight: '10px', background: '#3498db', color: '#fff', border: 'none' }} onClick={() => setShowGlobalSummary(true)}>📊 All Summary</button>
                     <button className="btn btn-primary" onClick={() => {
                         setEditId(null);
-                        setName(''); setEmail(''); setFingerprintId(''); setExperience(''); setSubject(''); setTiming(''); setSalary(''); setDailySalary(''); setProfession(''); setBatch('11th PCMB'); setOtherBatch('');
+                        setName(''); setEmail(''); setFingerprintId(''); setExperience(''); setSubject(''); setTiming(''); setSalary(''); setDailySalary(''); setProfession(''); setBatch('11th PCMB'); setOtherBatch(''); setDob('');
                         setStartHour('09'); setStartMin('00'); setStartAmpm('AM'); setEndHour('06'); setEndMin('00'); setEndAmpm('PM');
                         setPhone(''); setAadhar(''); setGender('Male'); setPhotoData(null);
                         setShowModal(true);
@@ -1422,67 +1475,67 @@ const TeachersPage = () => {
             </div>
             <div style={{ overflowX: 'auto', width: '100%' }}>
                 <table className="dashboard-table">
-                <thead>
-                    <tr style={{ whiteSpace: 'nowrap' }}>
-                        <th>Name</th>
-                        <th>Role</th>
-                        <th>Subject/Profession</th>
-                        <th>In Time</th>
-                        <th>Out Time</th>
-                        <th>Estimated Hrs</th>
-                        <th>Base Salary</th>
-                        <th>Biometric ID</th>
-                        <th>Payroll</th>
-                        <th>Actions</th>
-                    </tr >
-                </thead >
-                <tbody>
-                    {teachers.map(t => (
-                        <tr key={t.id} style={{ whiteSpace: 'nowrap' }}>
-                            <td>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                    {t.photo ? (
-                                        <img src={(t.photo.startsWith('http') || t.photo.startsWith('data:')) ? t.photo : `http://${backendHost}:8080${t.photo}`} alt="Face" style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover' }} />
-                                    ) : (
-                                        <div className="avatar">{t.name.charAt(0)}</div>
-                                    )}
-                                    <Link to={`/teacher/${t.fingerprint_id}`} style={{ fontWeight: '600', color: '#3b82f6', textDecoration: 'none' }}>
-                                        {t.name}
-                                    </Link>
-                                </div>
-                            </td>
-                            <td style={{ textTransform: 'capitalize' }}>{t.role}</td>
-                            <td>{t.role === 'teacher' ? `${t.subject || 'N/A'} ${t.batch ? `(${t.batch})` : ''}` : (t.profession || 'N/A')}</td>
-                            <td>{t.inTime}</td>
-                            <td>{t.outTime}</td>
-                            <td>{getEstimatedHrs(t)}</td>
-                            <td>₹ {t.salary ? t.salary.toLocaleString('en-IN') : '0'}</td>
-                            <td><code style={{ background: '#f0f2f5', padding: '4px 8px', borderRadius: '4px' }}>{t.fingerprint_id}</code></td>
-                            <td>
-                                {(t.role || '').toLowerCase() === 'teacher' ? (
-                                    <button className="btn btn-warning" style={{ padding: '4px 10px' }} onClick={() => setSelectedTeacher(t)}>💰 Calculate Pay</button>
-                                ) : (
-                                    <span style={{ color: '#888', fontSize: '13px' }}>N/A (Staff)</span>
-                                )}
-                            </td>
-                            <td>
-                                <div style={{ display: 'flex', gap: '5px' }}>
-                                    <Link to={`/teacher/${t.fingerprint_id}`} className="btn btn-primary" style={{ padding: '4px 10px', fontSize: '12px', background: '#3b82f6', borderColor: '#3b82f6', textDecoration: 'none', color: 'white' }}>👁️ View</Link>
-                                    <button className="btn btn-primary" style={{ padding: '4px 10px', fontSize: '12px', background: '#6366f1', borderColor: '#6366f1' }} onClick={() => handleEdit(t)}>✏️ Edit</button>
-                                    <button className="btn btn-danger" style={{ padding: '4px 10px', fontSize: '12px' }} onClick={() => handleDelete(t.fingerprint_id || t.id, t.name)}>🗑️ Delete</button>
-                                </div>
-                            </td>
+                    <thead>
+                        <tr style={{ whiteSpace: 'nowrap' }}>
+                            <th>Name</th>
+                            <th>Role</th>
+                            <th>Subject/Profession</th>
+                            <th>In Time</th>
+                            <th>Out Time</th>
+                            <th>Estimated Hrs</th>
+                            <th>Base Salary</th>
+                            <th>Biometric ID</th>
+                            <th>Payroll</th>
+                            <th>Actions</th>
                         </tr >
-                    ))}
-                    {
-                        teachers.length === 0 && (
-                            <tr>
-                                <td colSpan="10" style={{ textAlign: 'center', padding: '20px', color: '#888' }}>No teachers or staff found.</td>
-                            </tr>
-                        )
-                    }
-                </tbody >
-            </table >
+                    </thead >
+                    <tbody>
+                        {teachers.map(t => (
+                            <tr key={t.id} style={{ whiteSpace: 'nowrap' }}>
+                                <td>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                        {t.photo ? (
+                                            <img src={(t.photo.startsWith('http') || t.photo.startsWith('data:')) ? t.photo : `http://${backendHost}:8080${t.photo}`} alt="Face" style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover' }} />
+                                        ) : (
+                                            <div className="avatar">{t.name.charAt(0)}</div>
+                                        )}
+                                        <Link to={`/teacher/${t.fingerprint_id}`} style={{ fontWeight: '600', color: '#3b82f6', textDecoration: 'none' }}>
+                                            {t.name}
+                                        </Link>
+                                    </div>
+                                </td>
+                                <td style={{ textTransform: 'capitalize' }}>{t.role}</td>
+                                <td>{t.role === 'teacher' ? `${t.subject || 'N/A'} ${t.batch ? `(${t.batch})` : ''}` : (t.profession || 'N/A')}</td>
+                                <td>{t.inTime}</td>
+                                <td>{t.outTime}</td>
+                                <td>{getEstimatedHrs(t)}</td>
+                                <td>₹ {t.salary ? t.salary.toLocaleString('en-IN') : '0'}</td>
+                                <td><code style={{ background: '#f0f2f5', padding: '4px 8px', borderRadius: '4px' }}>{t.fingerprint_id}</code></td>
+                                <td>
+                                    {(t.role || '').toLowerCase() === 'teacher' ? (
+                                        <button className="btn btn-warning" style={{ padding: '4px 10px' }} onClick={() => setSelectedTeacher(t)}>💰 Calculate Pay</button>
+                                    ) : (
+                                        <span style={{ color: '#888', fontSize: '13px' }}>N/A (Staff)</span>
+                                    )}
+                                </td>
+                                <td>
+                                    <div style={{ display: 'flex', gap: '5px' }}>
+                                        <Link to={`/teacher/${t.fingerprint_id}`} className="btn btn-primary" style={{ padding: '4px 10px', fontSize: '12px', background: '#3b82f6', borderColor: '#3b82f6', textDecoration: 'none', color: 'white' }}>👁️ View</Link>
+                                        <button className="btn btn-primary" style={{ padding: '4px 10px', fontSize: '12px', background: '#6366f1', borderColor: '#6366f1' }} onClick={() => handleEdit(t)}>✏️ Edit</button>
+                                        <button className="btn btn-danger" style={{ padding: '4px 10px', fontSize: '12px' }} onClick={() => handleDelete(t.fingerprint_id || t.id, t.name)}>🗑️ Delete</button>
+                                    </div>
+                                </td>
+                            </tr >
+                        ))}
+                        {
+                            teachers.length === 0 && (
+                                <tr>
+                                    <td colSpan="10" style={{ textAlign: 'center', padding: '20px', color: '#888' }}>No teachers or staff found.</td>
+                                </tr>
+                            )
+                        }
+                    </tbody >
+                </table >
             </div>
 
             {showModal && (
@@ -1523,7 +1576,7 @@ const TeachersPage = () => {
                                 <input type="email" placeholder="Email Address" value={email} onChange={e => setEmail(e.target.value)} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ddd', boxSizing: 'border-box' }} />
                             </div>
 
-                            {role === 'teacher' && (
+                            {(role === 'teacher' || role === 'staff') && (
                                 <div style={{ background: '#f8f9fa', padding: '15px', borderRadius: '8px', marginBottom: '20px', border: '1px solid #ddd', boxSizing: 'border-box' }}>
                                     <h4 style={{ margin: '0 0 10px 0', fontSize: '13px', color: '#555', textTransform: 'uppercase' }}>Salary Information</h4>
                                     <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: '8px', alignItems: 'center', width: '100%' }}>
@@ -1639,9 +1692,6 @@ const TeachersPage = () => {
                                     <div style={{ background: '#f8f9fa', padding: '15px', borderRadius: '8px', marginBottom: '20px', border: '1px solid #ddd', boxSizing: 'border-box' }}>
                                         <h4 style={{ margin: '0 0 12px 0', fontSize: '13px', color: '#555', textTransform: 'uppercase' }}>Staff Details</h4>
                                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                                            <div style={{ gridColumn: 'span 2' }}>
-                                                <input type="text" placeholder="Profession (e.g. Receptionist, Security)" value={profession} onChange={e => setProfession(e.target.value)} style={{ padding: '10px', borderRadius: '6px', border: '1px solid #ddd', boxSizing: 'border-box', width: '100%' }} />
-                                            </div>
                                             <div>
                                                 <input
                                                     type="text"
@@ -1675,16 +1725,21 @@ const TeachersPage = () => {
                                                     <option value="Other">Other</option>
                                                 </select>
                                             </div>
-                                            <div>
+                                            <div style={{ position: 'relative' }}>
+                                                <label style={{ position: 'absolute', top: '-8px', left: '10px', background: '#f8f9fa', padding: '0 5px', fontSize: '11px', color: '#666' }}>Date of Birth</label>
+                                                <input
+                                                    type="date"
+                                                    value={dob}
+                                                    onChange={e => setDob(e.target.value)}
+                                                    style={{ padding: '10px', borderRadius: '6px', border: '1px solid #ddd', boxSizing: 'border-box', width: '100%', color: '#666', background: 'transparent' }}
+                                                />
+                                            </div>
+                                            <div style={{ gridColumn: 'span 2' }}>
                                                 <input
                                                     type="text"
-                                                    inputMode="numeric"
-                                                    placeholder="Experience (Years)"
-                                                    value={experience}
-                                                    onChange={e => {
-                                                        const val = e.target.value.replace(/\D/g, '');
-                                                        if (val.length <= 2) setExperience(val);
-                                                    }}
+                                                    placeholder="Profession / Job Title (e.g. Accountant, Security)"
+                                                    value={profession}
+                                                    onChange={e => setProfession(e.target.value)}
                                                     style={{ padding: '10px', borderRadius: '6px', border: '1px solid #ddd', boxSizing: 'border-box', width: '100%' }}
                                                 />
                                             </div>
@@ -2038,6 +2093,53 @@ const EnrollStudentPage = () => {
     const canvasRef = useRef(null);
     const [cameraActive, setCameraActive] = useState(false);
 
+    useEffect(() => {
+        const params = new URLSearchParams(window.location.search);
+        const draftId = params.get('draftId');
+        if (draftId) {
+            const drafts = JSON.parse(localStorage.getItem('admission_drafts') || '[]');
+            const matched = drafts.find(d => d.id === draftId);
+            if (matched) {
+                setFormData(matched.formData);
+                setStep(matched.step || 1);
+                if (matched.photoData) {
+                    setPhotoData(matched.photoData);
+                }
+                localStorage.setItem('current_enroll_draft_id', draftId);
+            }
+        } else {
+            localStorage.removeItem('current_enroll_draft_id');
+        }
+    }, []);
+
+    useEffect(() => {
+        if (!formData.name || formData.name.trim() === '') return;
+
+        const drafts = JSON.parse(localStorage.getItem('admission_drafts') || '[]');
+
+        let currentDraftId = localStorage.getItem('current_enroll_draft_id');
+        if (!currentDraftId) {
+            currentDraftId = 'draft_' + Date.now();
+            localStorage.setItem('current_enroll_draft_id', currentDraftId);
+        }
+
+        const existingIdx = drafts.findIndex(d => d.id === currentDraftId);
+        const draftData = {
+            id: currentDraftId,
+            formData,
+            step,
+            photoData,
+            updatedAt: new Date().toISOString()
+        };
+
+        if (existingIdx > -1) {
+            drafts[existingIdx] = draftData;
+        } else {
+            drafts.unshift(draftData);
+        }
+        localStorage.setItem('admission_drafts', JSON.stringify(drafts));
+    }, [formData, step, photoData]);
+
     const startCamera = async () => {
         setCameraActive(true);
         try {
@@ -2203,6 +2305,14 @@ const EnrollStudentPage = () => {
                 photo: photoData
             };
             const res = await api.post('/users/enroll', payload);
+
+            const currentDraftId = localStorage.getItem('current_enroll_draft_id');
+            if (currentDraftId) {
+                const drafts = JSON.parse(localStorage.getItem('admission_drafts') || '[]');
+                const updated = drafts.filter(d => d.id !== currentDraftId);
+                localStorage.setItem('admission_drafts', JSON.stringify(updated));
+                localStorage.removeItem('current_enroll_draft_id');
+            }
 
             if (receiptNo) {
                 alert("Student Enrollment Successful! Receipt No generated: " + receiptNo);
@@ -3014,7 +3124,7 @@ const TeacherProfilePage = () => {
 
     const handleExport = (format) => {
         if (!data || !data.records || data.records.length === 0) return;
-        
+
         const exportData = data.records.map(r => ({
             "Date": r.date,
             "In / Out": r.firstIn !== '--:--' ? `${r.firstIn} / ${r.lastOut}` : '--:-- / --:--',
@@ -3115,17 +3225,17 @@ const TeacherProfilePage = () => {
         doc.text(`Base Salary (Monthly): Rs ${baseSalary.toFixed(2)}`, 14, 40);
         doc.text(`Daily Rate (30 Days): Rs ${dailyRate.toFixed(2)}`, 14, 50);
         doc.text(`Shift Timing: ${teacher?.timing || 'N/A'} (Expected Hours: ${expectedHours.toFixed(1)}h)`, 14, 60);
-        
+
         doc.text(`Total Days: ${totalDays}`, 14, 75);
         doc.text(`Present Days: ${presentDays}`, 14, 85);
         doc.text(`Holidays/Sundays: ${sundayDays}`, 14, 95);
         doc.text(`Absent Days: ${absentDays}`, 14, 105);
         doc.text(`Equivalent Paid Days: ${computedPaidDays.toFixed(2)}`, 14, 115);
-        
+
         doc.setFontSize(14);
         doc.setTextColor('#16a34a');
         doc.text(`Net Payable Amount: Rs ${totalPay.toFixed(2)}`, 14, 130);
-        
+
         doc.save(`${tName}_Salary_Slip_${filterMonth}_${filterYear}.pdf`);
     };
 
@@ -3187,7 +3297,7 @@ const TeacherProfilePage = () => {
                         <div><strong>Telephone:</strong> {teacher.studentContact || teacher.phone || 'N/A'}</div>
                         <div><strong>Biometric Id:</strong> {teacher.fingerprint_id}</div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <strong>Status:</strong> 
+                            <strong>Status:</strong>
                             <span style={{ background: '#dcfce7', color: '#16a34a', padding: '4px 12px', borderRadius: '12px', fontSize: '12px', fontWeight: '600' }}>Active</span>
                         </div>
                     </div>
@@ -3314,7 +3424,7 @@ const TeacherProfilePage = () => {
                                         Get Punches
                                     </button>
                                 </div>
-                                
+
                                 {/* Right Table Panel */}
                                 <div style={{ flex: 1 }}>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
@@ -3338,59 +3448,59 @@ const TeacherProfilePage = () => {
                                             )}
                                         </div>
                                     </div>
-                                    
+
                                     <input type="text" placeholder="Search..." style={{ width: '100%', padding: '12px 16px', borderRadius: '8px', border: '1px solid #e2e8f0', marginBottom: '20px', outline: 'none', color: '#475569', fontSize: '14px', backgroundColor: '#f8fafc' }} />
-                                    
+
                                     <div style={{ maxHeight: '450px', overflowY: 'auto', border: '1px solid #e2e8f0', borderRadius: '8px', backgroundColor: 'white' }}>
-                                    {data.records && data.records.length > 0 ? (
-                                        <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
-                                            <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
-                                                <tr style={{ background: '#f8fafc', color: '#64748b', fontSize: '12px', letterSpacing: '0.5px' }}>
-                                                    <th style={{ padding: '15px 12px', borderBottom: '1px solid #e2e8f0', fontWeight: '600' }}>DATE</th>
-                                                    <th style={{ padding: '15px 12px', borderBottom: '1px solid #e2e8f0', fontWeight: '600' }}>IN / OUT</th>
-                                                    <th style={{ padding: '15px 12px', borderBottom: '1px solid #e2e8f0', fontWeight: '600' }}>PUNCHES</th>
-                                                    <th style={{ padding: '15px 12px', borderBottom: '1px solid #e2e8f0', fontWeight: '600' }}>TOTAL HOURS</th>
-                                                    <th style={{ padding: '15px 12px', borderBottom: '1px solid #e2e8f0', fontWeight: '600' }}>STATUS</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {data.records.map((r, i) => (
-                                                    <tr key={i} style={{ borderBottom: '1px solid #f1f5f9', ':hover': { backgroundColor: '#f8fafc' } }}>
-                                                        <td style={{ padding: '15px 12px', fontWeight: '500', color: '#1e293b' }}>{r.date}</td>
-                                                        <td style={{ padding: '15px 12px', color: '#64748b' }}>
-                                                            {r.firstIn !== '--:--' ? (
-                                                                <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
-                                                                    <span style={{ color: '#10b981', fontWeight: '600' }}>{r.firstIn}</span> /
-                                                                    <span style={{ color: '#f59e0b', fontWeight: '600' }}>{r.lastOut}</span>
-                                                                </div>
-                                                            ) : (
-                                                                <span style={{ color: '#94a3b8' }}>--:-- / --:--</span>
-                                                            )}
-                                                        </td>
-                                                        <td style={{ padding: '15px 12px', color: '#64748b' }}>{r.totalEntries || 0}</td>
-                                                        <td style={{ padding: '15px 12px', color: '#1e293b', fontWeight: '500' }}>
-                                                            {r.durationMinutes ? `${Math.floor(r.durationMinutes / 60)}h ${r.durationMinutes % 60}m` : '0h 0m'}
-                                                        </td>
-                                                        <td style={{ padding: '15px 12px' }}>
-                                                            {r.status === 'Late' ? (
-                                                                <span style={{ background: '#fef5e7', color: '#e67e22', padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '600' }}>Late</span>
-                                                            ) : r.status === 'Absent' ? (
-                                                                <span style={{ background: '#fef2f2', color: '#ef4444', padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '600' }}>Absent</span>
-                                                            ) : r.status === 'Sunday' ? (
-                                                                <span style={{ background: '#f8fafc', color: '#64748b', padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '600' }}>Sunday</span>
-                                                            ) : (
-                                                                <span style={{ color: '#10b981', fontWeight: '600' }}>Present</span>
-                                                            )}
-                                                        </td>
+                                        {data.records && data.records.length > 0 ? (
+                                            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
+                                                <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
+                                                    <tr style={{ background: '#f8fafc', color: '#64748b', fontSize: '12px', letterSpacing: '0.5px' }}>
+                                                        <th style={{ padding: '15px 12px', borderBottom: '1px solid #e2e8f0', fontWeight: '600' }}>DATE</th>
+                                                        <th style={{ padding: '15px 12px', borderBottom: '1px solid #e2e8f0', fontWeight: '600' }}>IN / OUT</th>
+                                                        <th style={{ padding: '15px 12px', borderBottom: '1px solid #e2e8f0', fontWeight: '600' }}>PUNCHES</th>
+                                                        <th style={{ padding: '15px 12px', borderBottom: '1px solid #e2e8f0', fontWeight: '600' }}>TOTAL HOURS</th>
+                                                        <th style={{ padding: '15px 12px', borderBottom: '1px solid #e2e8f0', fontWeight: '600' }}>STATUS</th>
                                                     </tr>
-                                                ))}
-                                            </tbody>
-                                        </table>
-                                    ) : (
-                                        <div style={{ padding: '40px', textAlign: 'center', color: '#94a3b8' }}>No data available in table</div>
-                                    )}
+                                                </thead>
+                                                <tbody>
+                                                    {data.records.map((r, i) => (
+                                                        <tr key={i} style={{ borderBottom: '1px solid #f1f5f9', ':hover': { backgroundColor: '#f8fafc' } }}>
+                                                            <td style={{ padding: '15px 12px', fontWeight: '500', color: '#1e293b' }}>{r.date}</td>
+                                                            <td style={{ padding: '15px 12px', color: '#64748b' }}>
+                                                                {r.firstIn !== '--:--' ? (
+                                                                    <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
+                                                                        <span style={{ color: '#10b981', fontWeight: '600' }}>{r.firstIn}</span> /
+                                                                        <span style={{ color: '#f59e0b', fontWeight: '600' }}>{r.lastOut}</span>
+                                                                    </div>
+                                                                ) : (
+                                                                    <span style={{ color: '#94a3b8' }}>--:-- / --:--</span>
+                                                                )}
+                                                            </td>
+                                                            <td style={{ padding: '15px 12px', color: '#64748b' }}>{r.totalEntries || 0}</td>
+                                                            <td style={{ padding: '15px 12px', color: '#1e293b', fontWeight: '500' }}>
+                                                                {r.durationMinutes ? `${Math.floor(r.durationMinutes / 60)}h ${r.durationMinutes % 60}m` : '0h 0m'}
+                                                            </td>
+                                                            <td style={{ padding: '15px 12px' }}>
+                                                                {r.status === 'Late' ? (
+                                                                    <span style={{ background: '#fef5e7', color: '#e67e22', padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '600' }}>Late</span>
+                                                                ) : r.status === 'Absent' ? (
+                                                                    <span style={{ background: '#fef2f2', color: '#ef4444', padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '600' }}>Absent</span>
+                                                                ) : r.status === 'Sunday' ? (
+                                                                    <span style={{ background: '#f8fafc', color: '#64748b', padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '600' }}>Sunday</span>
+                                                                ) : (
+                                                                    <span style={{ color: '#10b981', fontWeight: '600' }}>Present</span>
+                                                                )}
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        ) : (
+                                            <div style={{ padding: '40px', textAlign: 'center', color: '#94a3b8' }}>No data available in table</div>
+                                        )}
                                     </div>
-                                    
+
                                     <div style={{ display: 'flex', justifyContent: 'space-between', padding: '20px 0 10px 0', color: '#1e293b', fontSize: '14px', fontWeight: '600' }}>
                                         <div>TOTAL</div>
                                         <div>{data.summary ? data.summary.totalHours : '0.00'} HRS</div>
@@ -3417,14 +3527,14 @@ const TeacherProfilePage = () => {
                                     const baseSalary = Number(teacher?.salary) || 0;
                                     const dailyRate = baseSalary / 30;
                                     const expectedHours = getExpectedHours(teacher?.timing);
-                                    
+
                                     const records = data?.records || [];
-                                    
+
                                     const totalDays = records.length;
                                     const absentDays = records.filter(r => r.status === 'Absent').length;
                                     const sundayDays = records.filter(r => r.status === 'Sunday').length;
                                     const presentDays = records.filter(r => r.status === 'Present' || r.status === 'Late').length;
-                                    
+
                                     let totalPay = 0;
                                     let paidDays = 0;
                                     records.forEach(r => {
@@ -3456,7 +3566,7 @@ const TeacherProfilePage = () => {
                                             <div style={{ background: '#f8fafc', padding: '15px', borderRadius: '10px', marginBottom: '20px', fontSize: '14px', color: '#475569' }}>
                                                 <strong>Shift Timing:</strong> {teacher?.timing || 'N/A'} (Expected: {expectedHours.toFixed(1)} hours/day)
                                             </div>
-                                            
+
                                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '15px', marginBottom: '30px' }}>
                                                 <div style={{ textAlign: 'center', padding: '12px', border: '1px solid #e2e8f0', borderRadius: '8px' }}>
                                                     <div style={{ fontSize: '22px', fontWeight: 'bold', color: '#3b82f6' }}>{totalDays}</div>
@@ -3606,7 +3716,7 @@ const StudentProfilePage = () => {
 
     const handleExport = (format) => {
         if (!data || !data.records || data.records.length === 0) return;
-        
+
         const exportData = data.records.map(r => ({
             "Date": r.date,
             "In / Out": r.firstIn !== '--:--' ? `${r.firstIn} / ${r.lastOut}` : '--:-- / --:--',
